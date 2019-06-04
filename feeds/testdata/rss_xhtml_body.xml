@@ -6,7 +6,7 @@ Expect:      not bozo and entries[0]['content'][0]['value'] == '<p>Example conte
 <channel>
 <item>
 <body xmlns="http://www.w3.org/1999/xhtml">
-<p>Example content</p>
+<p>Example content</p><script>alert('fish');</script>
 </body>
 </item>
 </channel>

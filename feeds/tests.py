@@ -18,12 +18,7 @@ import requests_mock
 TEST_FILES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)),"testdata")
 BASE_URL = 'http://feed.com/'
 
-
-
-        
-
-@requests_mock.Mocker()
-class HTTPStuffTest(TestCase):
+class BaseTest(TestCase):
 
 
     def _populate_mock(self, mock, test_file, status, content_type, etag=None, headers=None, url=BASE_URL):
@@ -41,7 +36,79 @@ class HTTPStuffTest(TestCase):
             mock.register_uri('GET', url, status_code=status, content=content, headers=ret_headers)
         else:
             mock.register_uri('GET', url, request_headers={'If-None-Match': etag}, status_code=status, content=content, headers=ret_headers)
-            
+
+
+@requests_mock.Mocker()
+class XMLFeedsTest(BaseTest):
+
+
+    def test_simple_xml(self, mock):
+        
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.post_set.count(), 1) # got the one post
+        self.assertEqual(src.interval, 60)
+        self.assertEqual(src.etag, "an-etag")
+
+
+    def test_sanitize(self, mock):
+        
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        p = src.post_set.all()[0]
+        
+        self.assertFalse("<script>" in p.body)
+
+
+@requests_mock.Mocker()
+class JSONFeedTest(BaseTest):
+
+
+    def test_simple_json(self, mock):
+        
+        self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.post_set.count(), 2) # got the one post
+        self.assertEqual(src.interval, 60)
+        self.assertEqual(src.etag, "an-etag")
+        
+
+    def test_sanitize(self, mock):
+        
+        self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        p = src.post_set.all()[0]
+        
+        self.assertFalse("<script>" in p.body)     
+
+
+@requests_mock.Mocker()
+class HTTPStuffTest(BaseTest):
+
 
     def test_etags(self, mock):
 

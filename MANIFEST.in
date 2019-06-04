@@ -1,0 +1,3 @@
+include README.md
+recursive-include feeds/static *
+recursive-include feeds/templates *

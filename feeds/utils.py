@@ -14,7 +14,6 @@ import requests
 import io
 import pyrfc3339
 import json
-import traceback
 
 from django.conf import settings
 
@@ -131,7 +130,7 @@ def read_feed(source_feed, output=None):
         
         
     
-    elif ret.status_code == 301: #permenant redirect
+    elif ret.status_code == 301 or ret.status_code == 308: #permenant redirect
         new_url = ""
         try:
             if "Location" in ret.headers:
