@@ -22,6 +22,7 @@ import hashlib
 import logging
 
 
+
 def fix_relative(html, url):
 
     """ this is fucking cheesy """
@@ -427,9 +428,8 @@ def parse_feed_xml(source_feed, feed_content, output):
                 p.save()
                 # output.write(p.body)
             except Exception as ex:
-                #output.write(str(sys.exc_info()[0]))
-                output.write("\nSave error for post:" + str(sys.exc_info()[0]))
-                traceback.print_tb(sys.exc_info()[2],file=output)
+                output.write(str(ex))
+                output.write(p.body)
 
     return (ok,changed)
     
@@ -541,8 +541,7 @@ def parse_feed_json(source_feed, feed_content, output):
                 p.save()
                 # output.write(p.body)
             except Exception as ex:
-                #output.write(str(sys.exc_info()[0]))
-                output.write("\nSave error for post:" + str(sys.exc_info()[0]))
-                traceback.print_tb(sys.exc_info()[2],file=output)
+                output.write(str(ex))
+                output.write(p.body)
 
     return (ok,changed)
