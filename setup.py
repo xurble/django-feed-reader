@@ -7,7 +7,7 @@ with open('README.md', encoding='utf-8') as f:
 
 setuptools.setup(
     name='django-feed-reader',
-    version='0.0.3',
+    version='0.0.4',
     description='An RSS feed reading library for Django.',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -26,7 +26,7 @@ setuptools.setup(
         'feedparser',
         'beautifulsoup4',
         'pyrfc3339',
-        'Django>=2.0'
+        'Django>=2.2'
     ],
     include_package_data=True,
 )
