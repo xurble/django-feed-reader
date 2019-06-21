@@ -251,6 +251,9 @@ def read_feed(source_feed, output=None):
 
 def import_feed(source_feed, feed_body, content_type, output=None):
 
+    if  output is None:
+        output = io.StringIO()
+
     ok = False
     changed = False
         
@@ -301,10 +304,13 @@ def parse_feed_xml(source_feed, feed_content, output):
         ok = False
     
     if ok:
+        try:
+            source_feed.name = f.feed.title
+        except Exception as ex:
+            pass
 
         try:
             source_feed.site_url = f.feed.link
-            source_feed.name = f.feed.title
         except Exception as ex:
             pass
     
@@ -471,6 +477,10 @@ def parse_feed_json(source_feed, feed_content, output):
             source_feed.name = f["title"]
         except Exception as ex:
             pass
+            
+            
+        source_feed.name = feedparser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
+            
     
 
         #output.write(entries)

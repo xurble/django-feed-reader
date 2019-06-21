@@ -1,0 +1,14 @@
+{
+    "version": "https://jsonfeed.org/version/1",
+    "title": "sa<!-- -- nonwhitespace >fe<script>alert(1);</script>",
+    "home_page_url": "https://example.org/",
+    "feed_url": "https://example.org/feed.json",
+    "icon": "https://example.org/feed.png",
+    "items": [
+        {
+            "id": "1",
+            "content_html": "<p>Hello, world!</p>\n\n<script>alert();</script>",
+            "url": "https://example.org/initial-post"
+        }
+    ]
+}

@@ -57,7 +57,11 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(src.etag, "an-etag")
 
 
-    def test_sanitize(self, mock):
+    def test_sanitize_1(self, mock):
+    
+        """
+            Make sure feedparser's sanitization is running
+        """
         
         self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
 
@@ -70,6 +74,25 @@ class XMLFeedsTest(BaseTest):
         p = src.post_set.all()[0]
         
         self.assertFalse("<script>" in p.body)
+        
+        
+    def test_sanitize_2(self, mock): 
+        """
+            Another test that the sanitization is going on.  This time we have 
+            stolen a test case from the feedparser libarary
+        """
+    
+        self._populate_mock(mock, status=200, test_file="sanitizer_bad_comment.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # read the feed to update the name
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.name, "safe")
+    
+        
 
 
 @requests_mock.Mocker()
@@ -91,7 +114,7 @@ class JSONFeedTest(BaseTest):
         self.assertEqual(src.etag, "an-etag")
         
 
-    def test_sanitize(self, mock):
+    def test_sanitize_1(self, mock):
         
         self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
 
@@ -104,6 +127,23 @@ class JSONFeedTest(BaseTest):
         p = src.post_set.all()[0]
         
         self.assertFalse("<script>" in p.body)     
+
+    def test_sanitize_2(self, mock): 
+        """
+            Another test that the sanitization is going on.  This time we have 
+            stolen a test case from the feedparser libarary
+        """
+    
+        self._populate_mock(mock, status=200, test_file="sanitizer_bad_comment.json", content_type="application/json")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # read the feed to update the name
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.name, "safe")
+
 
 
 @requests_mock.Mocker()
@@ -240,12 +280,12 @@ class HTTPStuffTest(BaseTest):
         read_feed(src)         
         self.assertEqual(src.status_code, 301)  
         self.assertEqual(src.interval, 60)  
+        self.assertEqual(src.feed_url, new_url)
 
         read_feed(src)         
         self.assertEqual(src.status_code, 200)  
         self.assertEqual(src.post_set.count(), 1) 
         self.assertEqual(src.interval, 60)
-        self.assertEqual(src.feed_url, new_url)
         self.assertTrue(src.live)
 
 
@@ -257,7 +297,7 @@ class HTTPStuffTest(BaseTest):
         src.save()
         
         read_feed(src)         
-        self.assertEqual(src.status_code, 500)  # it returned a page, but not a  feed
+        self.assertEqual(src.status_code, 500)  # error
         self.assertEqual(src.post_set.count(), 0) # can't have got any
         self.assertTrue(src.live)       
         self.assertEqual(src.interval, 120)
@@ -271,7 +311,7 @@ class HTTPStuffTest(BaseTest):
         src.save()
         
         read_feed(src)         
-        self.assertEqual(src.status_code, 503)  # it returned a page, but not a  feed
+        self.assertEqual(src.status_code, 503)  # error!
         self.assertEqual(src.post_set.count(), 0) # can't have got any
         self.assertTrue(src.live)       
         self.assertEqual(src.interval, 120)
