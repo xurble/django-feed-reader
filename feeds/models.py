@@ -160,3 +160,13 @@ class Enclosure(models.Model):
 
         return "/enclosure/%d/" % self.id
         
+        
+class WebProxy(models.Model):
+    # this class if for Cloudflare avoidance and contains a list of potential
+    # web proxies that we can try, scraped from the internet
+    address = models.CharField(max_length=255)
+    
+    def __str__(self):
+        return "Proxy:{}".format(self.address)
+
+        

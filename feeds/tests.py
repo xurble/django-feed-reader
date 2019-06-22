@@ -1,8 +1,9 @@
 from django.test import TestCase, Client
+from django.conf import settings
 
 # Create your tests here.
-from feeds.models import Source, Post, Enclosure
-from feeds.utils import read_feed
+from feeds.models import Source, Post, Enclosure, WebProxy
+from feeds.utils import read_feed, find_proxies, get_proxy
 
 from django.utils import timezone
 from django.urls import reverse
@@ -21,7 +22,7 @@ BASE_URL = 'http://feed.com/'
 class BaseTest(TestCase):
 
 
-    def _populate_mock(self, mock, test_file, status, content_type, etag=None, headers=None, url=BASE_URL):
+    def _populate_mock(self, mock, test_file, status, content_type, etag=None, headers=None, url=BASE_URL, is_cloudflare=False):
     
         content = open(os.path.join(TEST_FILES_FOLDER, test_file), "rb").read()
         
@@ -32,10 +33,15 @@ class BaseTest(TestCase):
         
         {"Content-Type": content_type, "etag":"an-etag"}
         
-        if etag is None:
-            mock.register_uri('GET', url, status_code=status, content=content, headers=ret_headers)
+        if is_cloudflare:
+                agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=1)
+
+                mock.register_uri('GET', url, request_headers={"User-Agent": agent}, status_code=status, content=content, headers=ret_headers)
         else:
-            mock.register_uri('GET', url, request_headers={'If-None-Match': etag}, status_code=status, content=content, headers=ret_headers)
+            if etag is None:
+                mock.register_uri('GET', url, status_code=status, content=content, headers=ret_headers)
+            else:
+                mock.register_uri('GET', url, request_headers={'If-None-Match': etag}, status_code=status, content=content, headers=ret_headers)
 
 
 @requests_mock.Mocker()
@@ -143,12 +149,61 @@ class JSONFeedTest(BaseTest):
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.name, "safe")
+        
+    
+    def test_podcast(self, mock):
 
+        self._populate_mock(mock, status=200, test_file="podcast.json", content_type="application/json")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # read the feed to update the name
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        
+        post = src.post_set.all()[0]
+        
+        self.assertEqual(post.enclosure_set.count(), 1)
 
 
 @requests_mock.Mocker()
 class HTTPStuffTest(BaseTest):
 
+    def test_fucking_cloudflare(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
+        self._populate_mock(mock, status=403, test_file="json_simple_two_entry.json", content_type="application/json", is_cloudflare=True)
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, is_cloudflare=False)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)         
+        self.assertEqual(src.status_code, 403)
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, is_cloudflare=True)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+        
+    def test_find_proxies(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="proxy_list.html", content_type="text/html", url="http://www.workingproxies.org")
+    
+        find_proxies()
+        
+        self.assertEqual(WebProxy.objects.count(), 20)
+
+    def test_get_proxy(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="proxy_list.html", content_type="text/html", url="http://www.workingproxies.org")
+    
+        p = get_proxy()
+        
+        self.assertIsNotNone(p)
 
     def test_etags(self, mock):
 

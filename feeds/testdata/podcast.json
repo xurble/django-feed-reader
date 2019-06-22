@@ -1,0 +1,31 @@
+{
+    "version":"https:\/\/jsonfeed.org\/version\/1",
+    "title":"It's Been a Minute with Sam Sanders",
+    "home_page_url":"https:\/\/www.npr.org\/podcasts\/510317\/its-been-a-minute-with-sam-sanders",
+    "feed_url":"https:\/\/www.npr.org\/feeds\/510317\/feed.json",
+    "description":"A talk show with a heart. Each week, Sam interviews people in the culture who deserve your attention. Plus weekly wraps of the news with other journalists. Join Sam as he makes sense of the world through conversation.",
+    "next_url":"https:\/\/www.npr.org\/feeds\/510317\/feed.json?start=11",
+    "icon":"https:\/\/media.npr.org\/assets\/img\/2018\/08\/03\/npr_itsbeenaminute_podcasttile_sq-eccd77920d48ca14196afda81b7651a5f8be63b7.jpg?s=1400",
+    "favicon":"https:\/\/media.npr.org\/assets\/img\/2018\/08\/03\/npr_itsbeenaminute_podcasttile_sq-eccd77920d48ca14196afda81b7651a5f8be63b7.jpg?s=200",
+    "author":{"name":"NPR","url":"https:\/\/www.npr.org?utm_medium=JSONFeed&utm_campaign=itsbeenaminutewithsamsanders",
+    "avatar":"https:\/\/media.npr.org\/images\/stations\/nprone_logos\/npr.png"},
+    "items":[
+        {
+            "id":"734830514",
+            "title":"Weekly Wrap: UFOs, Iran, Libra",
+            "content_text":"Capitol Hill's interest in aliens grows, tensions rise between Iran and the U.S. and Facebook has big plans for its new cryptocurrency? Plus, Sam goes deep on the breakup anthem of a generation: Robyn's \"Dancing On My Own.\" Tweet feels @NPRItsBeenAMin.",
+            "content_html":"<p>Capitol Hill's interest in aliens grows, tensions rise between Iran and the U.S. and Facebook has big plans for its new cryptocurrency? Plus, Sam goes deep on the breakup anthem of a generation: Robyn's \"Dancing On My Own.\" Tweet feels @NPRItsBeenAMin.<\/p><img src='https:\/\/media.npr.org\/include\/images\/tracking\/npr-rss-pixel.png?story=734830514' \/>",
+            "summary":"Geoff Brumfiel (@gbrumfiel), NPR Science Desk Senior Editor and Correspondent, and NPR Business Desk Reporter Camila Domonoske (@camilareads) wrap up the week of news with Sam.  ",
+            "image":"https:\/\/media.npr.org\/assets\/img\/2019\/06\/21\/gettyimages-131034132_wide-65f1d2dc6bcd552b64c6846674fe90e464e38e1a.jpg?s=1400",
+            "date_published":"2019-06-21T16:27:41-04:00",
+            "attachments":[
+                {
+                    "url":"https:\/\/play.podtrac.com\/npr-510317\/edge1.pod.npr.org\/anon.npr-mp3\/npr\/sam\/2019\/06\/20190621_sam_wrap621.mp3?orgId=1&d=2353&p=510317&story=734830514&t=podcast&e=734830514&size=37575870&ft=pod&f=510317&awCollectionId=510317&awEpisodeId=734830514",
+                    "mime_type":"audio\/mpeg",
+                    "size_in_bytes":{"0":"37575870"},
+                    "duration_in_seconds":2353
+                }]
+        }
+    ]
+}
+

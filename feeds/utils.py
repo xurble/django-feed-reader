@@ -1,7 +1,7 @@
 from django.db.models import Q
 from django.utils import timezone
 
-from feeds.models import Source, Enclosure, Post
+from feeds.models import Source, Enclosure, Post, WebProxy
 
 import feedparser
 
@@ -11,23 +11,79 @@ import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import requests
-import io
+
 import pyrfc3339
 import json
 
 from django.conf import settings
 
 import hashlib
-
+from random import choice
 import logging
+
+
+
+class NullOutput(object):
+    # little class for when we have no outputter    
+    def write(self, str):
+        pass
+
+
+def _customize_sanitizer(fp):
+
+
+    bad_attributes = [
+        "align",
+        "valign"
+    ]
+    
+    for item in bad_attributes:
+        try:
+            fp._HTMLSanitizer.acceptable_attributes.remove(item)
+        except Exception:
+            logging.debug("Could not remove {}".format(item))
+            
+_customize_sanitizer(feedparser)
+
+
+def get_agent(source_feed):
+
+    if source_feed.is_cloudflare:
+        agent = random_user_agent()
+        logging.error("using agent: {}".format(agent))
+    else:
+        agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=source_feed.num_subs)
+
+    return agent
+
+def random_user_agent():
+
+    return choice([
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36 Edge/14.14393",
+        "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; .NET CLR 1.1.4322; .NET CLR 2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729)",
+        "Mozilla/5.0 (iPad; CPU OS 8_4_1 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12H321 Safari/600.1.4",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_1 like Mac OS X) AppleWebKit/603.1.30 (KHTML, like Gecko) Version/10.0 Mobile/14E304 Safari/602.1",
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Mozilla/5.0 (Linux; Android 5.0; SAMSUNG SM-N900 Build/LRX21V) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/2.1 Chrome/34.0.1847.76 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 6.0.1; SAMSUNG SM-G570Y Build/MMB29K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/44.0.2403.133 Mobile Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:53.0) Gecko/20100101 Firefox/53.0"
+    ])
 
 
 
 def fix_relative(html, url):
 
     """ this is fucking cheesy """
+    
+    
     try:
         base = "/".join(url.split("/")[:3])
+
+        html = html.replace("src='//", "src='http://")
+        html = html.replace('src="//', 'src="http://')
+
 
         html = html.replace("src='/", "src='%s/" % base)
         html = html.replace('src="/', 'src="%s/' % base)
@@ -38,10 +94,8 @@ def fix_relative(html, url):
     return html
         
 
-def update_feeds(max_feeds=3, output=None):
+def update_feeds(max_feeds=3, output=NullOutput()):
 
-    if  output is None:
-        output = io.StringIO()
 
     todo = Source.objects.filter(Q(due_poll__lt = timezone.now()) & Q(live = True))
 
@@ -57,20 +111,36 @@ def update_feeds(max_feeds=3, output=None):
         read_feed(src, output)
     
     
-def read_feed(source_feed, output=None):
+def read_feed(source_feed, output=NullOutput()):
 
     old_interval = source_feed.interval
 
-    if  output is None:
-        output = io.StringIO()
 
     was302 = False
     
     output.write("\n------------------------------\n")
     
     source_feed.last_polled = timezone.now()
+    
+    agent = get_agent(source_feed)
 
-    headers = { "User-Agent": "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=source_feed.num_subs),  } #identify ourselves 
+    headers = { "User-Agent": agent } #identify ourselves 
+
+
+    proxies = {}
+    proxy = None
+    if source_feed.is_cloudflare : # Fuck you !
+        try:
+            
+            proxy = get_proxy(output)
+            
+            proxies = {
+              'http': proxy.address,
+              'https': proxy.address,
+            }
+        except:
+            pass    
+
 
     if source_feed.etag:
         headers["If-None-Match"] = str(source_feed.etag)
@@ -81,7 +151,7 @@ def read_feed(source_feed, output=None):
     
     ret = None
     try:
-        ret = requests.get(source_feed.feed_url, headers=headers, allow_redirects=False, timeout=20)
+        ret = requests.get(source_feed.feed_url, headers=headers, allow_redirects=False, timeout=20, proxies=proxies)
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
@@ -90,6 +160,15 @@ def read_feed(source_feed, output=None):
         source_feed.last_result = ("Fetch error:" + str(ex))[:255]
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
+
+
+        if proxy:
+            source_feed.lastResult = "Proxy failed. Next retry will use new proxy"
+            source_feed.status_code = 1 # this will stop us increasing the interval
+
+            output.write("\nBurning the proxy.")
+            proxy.delete()
+            source_feed.interval /= 2
 
 
         
@@ -108,12 +187,21 @@ def read_feed(source_feed, output=None):
     elif ret.status_code == 403 or ret.status_code == 410: #Forbidden or gone
 
         if "Cloudflare" in ret.text or ("Server" in ret.headers and "cloudflare" in ret.headers["Server"]):
-            source_feed.is_cloudflare = True
-            source_feed.last_result = "Blocked by Cloudflare (grr)"
+
+            if source_feed.is_cloudflare and proxy is not None:
+                # we are already proxied - this proxy on cloudflare's shit list too?
+                proxy.delete()
+                output.write("\Proxy seemed to also be blocked, burning")
+                source_feed.interval /= 2
+                source_feed.lastResult = "Proxy kind of worked but still got cloudflared."
+            else:            
+                source_feed.is_cloudflare = True
+                source_feed.last_result = "Blocked by Cloudflare (grr)"
         else:
             source_feed.last_result = "Feed is no longer accessible."
-        source_feed.live = False
+            source_feed.live = False
             
+
     elif ret.status_code >= 400 and ret.status_code < 500:
         #treat as bad request
         source_feed.live = False
@@ -225,7 +313,7 @@ def read_feed(source_feed, output=None):
         if "Content-Type" in ret.headers:
             content_type = ret.headers["Content-Type"]
 
-        (ok,changed) = import_feed(source_feed=source_feed, feed_body=ret.text.strip(), content_type=content_type, output=output)
+        (ok,changed) = import_feed(source_feed=source_feed, feed_body=ret.content, content_type=content_type, output=output)
         
         if ok and changed:
             source_feed.interval /= 2
@@ -249,18 +337,16 @@ def read_feed(source_feed, output=None):
     source_feed.save()
         
 
-def import_feed(source_feed, feed_body, content_type, output=None):
+def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
 
-    if  output is None:
-        output = io.StringIO()
 
     ok = False
     changed = False
-        
-    if "xml" in content_type or feed_body[0:1] == "<":
+    
+    if "xml" in content_type or feed_body[0:1] == b"<":
         (ok,changed) = parse_feed_xml(source_feed, feed_body, output)
-    elif "json" in content_type or feed_body[0:1] == "{":
-        (ok,changed) = parse_feed_json(source_feed, feed_body, output)
+    elif "json" in content_type or feed_body[0:1] == b"{":
+        (ok,changed) = parse_feed_json(source_feed, str(feed_body, "utf-8"), output)
     else:
         ok = False
         source_feed.last_result = "Unknown Feed Type: " + content_type
@@ -290,6 +376,7 @@ def parse_feed_xml(source_feed, feed_content, output):
 
     #output.write(ret.content)           
     try:
+        
         f = feedparser.parse(feed_content) #need to start checking feed parser errors here
         entries = f['entries']
         if len(entries):
@@ -315,23 +402,39 @@ def parse_feed_xml(source_feed, feed_content, output):
             pass
     
 
+        try:
+            source_feed.image_url = f.feed.image.href
+        except:
+            pass
+
         #output.write(entries)
         entries.reverse() # Entries are typically in reverse chronological order - put them in right order
         for e in entries:
-            try:
-                if e.content[0].type == "text/plain":
-                    raise
-                body = e.content[0].value
-            except Exception as ex:
-                try:
-                    body = e.summary                    
-                except Exception as ex:
-                    body = " "
+        
+
+            # we are going to take the longest
+            body = ""
+            
+            if hasattr(e, "content"):
+                for c in e.content:
+                    if len(c.value) > len(body):
+                        body = c.value
+            
+            if hasattr(e, "summary"):
+                if len(e.summary) > len(body):
+                    body = e.summary
+
+            if hasattr(e, "summary_detail"):
+                if len(e.summary_detail.value) > len(body):
+                    body = e.summary_detail.value
+
+            if hasattr(e, "description"):
+                if len(e.description) > len(body):
+                    body = e.description
+
 
             body = fix_relative(body, source_feed.site_url)
-
-
-
+            
             try:
                 guid = e.guid
             except Exception as ex:
@@ -348,7 +451,7 @@ def parse_feed_xml(source_feed, feed_content, output):
 
             except Exception as ex:
                 output.write("NEW " + guid + "\n")
-                p = Post(index=0)
+                p = Post(index=0, body=" ")
                 p.found = timezone.now()
                 changed = True
                 p.source = source_feed
@@ -364,8 +467,14 @@ def parse_feed_xml(source_feed, feed_content, output):
                 p.link = ''
             p.title = title
 
+
             try:
-        
+                p.image_url = e.image.href
+            except:
+                pass
+
+
+            try:
                 p.created  = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=timezone.utc)
 
             except Exception as ex:
@@ -377,6 +486,15 @@ def parse_feed_xml(source_feed, feed_content, output):
                 p.author = e.author
             except Exception as ex:
                 p.author = ""
+
+
+            try:
+                p.save()
+                # output.write(p.body)
+            except Exception as ex:
+                import pdb; pdb.set_trace()
+                output.write(str(ex))
+
 
             try:
                 seen_files = []
@@ -470,7 +588,7 @@ def parse_feed_json(source_feed, feed_content, output):
             # for now source_feed.interval to max
             source_feed.interval = (24*3*60)
             source_feed.last_result = "This feed has expired"
-            return (False,False,source_feed.interval)
+            return (False, False, source_feed.interval)
 
         try:
             source_feed.site_url = f["home_page_url"]
@@ -480,8 +598,10 @@ def parse_feed_json(source_feed, feed_content, output):
             
             
         source_feed.name = feedparser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
-            
-    
+
+        if "icon" in f:
+            source_feed.image_url = f["icon"]
+
 
         #output.write(entries)
         entries.reverse() # Entries are typically in reverse chronological order - put them in right order
@@ -493,6 +613,8 @@ def parse_feed_json(source_feed, feed_content, output):
                 body = e["content_html"] # prefer html over text
                 
             body = fix_relative(body,source_feed.site_url)
+            
+            
 
             try:
                 guid = e["id"]
@@ -510,7 +632,7 @@ def parse_feed_json(source_feed, feed_content, output):
 
             except Exception as ex:
                 output.write("NEW " + guid + "\n")
-                p = Post(index=0)
+                p = Post(index=0, body=' ')
                 p.found = timezone.now()
                 changed = True
                 p.source = source_feed
@@ -521,9 +643,16 @@ def parse_feed_json(source_feed, feed_content, output):
                 title = ""      
                 
             # borrow the RSS parser's sanitizer
+
             body  = feedparser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
             title = feedparser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates
+
+            if "banner_image" in e:
+                p.image_url = e["banner_image"]                
+
+            if "image" in e:
+                p.image_url = e["image"]                
 
                         
             try:
@@ -545,6 +674,61 @@ def parse_feed_json(source_feed, feed_content, output):
                 p.author = e["author"]
             except Exception as ex:
                 p.author = ""
+                
+            p.save()
+            
+
+            try:
+                seen_files = []
+                for ee in list(p.enclosure_set.all()):
+                    # check existing enclosure is still there
+                    found_enclosure = False
+                    if "attachments" in e:
+                        for pe in e["attachments"]:
+                    
+                            if pe["url"] == ee.href and ee.href not in seen_files:
+                                found_enclosure = True
+                        
+                                try:
+                                    ee.length = int(pe["size_in_bytes"])
+                                except:
+                                    ee.length = 0
+
+                                try:
+                                    type = pe["mime_type"]
+                                except:
+                                    type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
+
+                                ee.type = type
+                                ee.save()
+                                break
+                    if not found_enclosure:
+                        ee.delete()
+                    seen_files.append(ee.href)
+
+                if "attachments" in e:
+                    for pe in e["attachments"]:
+
+                        try:
+                            if pe["url"] not in seen_files:
+                    
+                                try:
+                                    length = int(pe["size_in_bytes"])
+                                except:
+                                    length = 0
+                            
+                                try:
+                                    type = pe["mime_type"]
+                                except:
+                                    type = "audio/mpeg"
+                    
+                                ee = Enclosure(post=p , href=pe["url"], length=length, type=type)
+                                ee.save()
+                        except Exception as ex:
+                            pass
+            except Exception as ex:
+                if output:
+                    output.write("No enclosures - " + str(ex))
 
             try:
                 p.body = body                       
@@ -555,3 +739,81 @@ def parse_feed_json(source_feed, feed_content, output):
                 output.write(p.body)
 
     return (ok,changed)
+    
+    
+def test_feed(source, cache=False, output=NullOutput()):
+
+
+    headers = { "User-Agent": get_agent(source)  } #identify ourselves and also stop our requests getting picked up by google's cache
+
+    if cache:
+        if source.etag:
+            headers["If-None-Match"] = str(source.etag)
+        if source.last_modified:
+            headers["If-Modified-Since"] = str(source.last_modified)
+    else:
+        headers["Cache-Control"] = "no-cache,max-age=0" 
+        headers["Pragma"] = "no-cache"
+
+    output.write("\n" + str(headers))
+
+    ret = requests.get(source.feed_url,headers=headers,allow_redirects=False,verify=False,timeout=20)
+
+    output.write("\n\n")
+    
+    output.write(str(ret))
+    
+    output.write("\n\n")
+    
+    output.write(ret.text)
+    
+    
+def get_proxy(out=NullOutput()):
+
+    p = WebProxy.objects.first()
+    
+    if p is None:
+        find_proxies(out)
+        p = WebProxy.objects.first()
+    
+    out.write("Proxy: {}".format(str(p)))
+    
+    return p 
+    
+    
+
+def find_proxies(out=NullOutput()):
+    
+    
+    out.write("\nLooking for proxies\n")
+    
+    try:
+        req = requests.get("http://www.workingproxies.org", timeout=30)
+        if req.status_code == 200:
+            soup = BeautifulSoup(req.text)
+            
+            tables = soup.find_all("table")
+            
+            for table in tables:
+                if "class" in table.attrs and "proxies" in table["class"]:
+                    tbody = table.find("tbody")
+                    rows = tbody.find_all("tr")
+                    
+                    for i in range(20):
+                        row = rows[i]
+                        cells = row.find_all("td")
+                        
+                        WebProxy(address="http://{ip}:{port}".format(ip=cells[0].text, port=cells[1].text)).save()
+                        
+    except Exception as ex:
+        logging.error("Proxy scrape error: {}".format(str(ex)))
+        out.write("Proxy scrape error: {}\n".format(str(ex)))
+            
+    if WebProxy.objects.count() == 0:
+        # something went wrong.
+        # to stop infinite loops we will insert a duff proxy now
+        # which will break the next read, but it would be broken anyway
+        WebProxy(address="http://127.0.0.1:9876").save()
+        out.write("No proxies found.\n")
+    
+    
