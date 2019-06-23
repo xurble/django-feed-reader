@@ -109,6 +109,10 @@ def update_feeds(max_feeds=3, output=NullOutput()):
 
     for src in sources:
         read_feed(src, output)
+        
+    # kill shit proxies
+    
+    WebProxy.objects.filter(address='X').delete()
     
     
 def read_feed(source_feed, output=NullOutput()):
@@ -131,13 +135,15 @@ def read_feed(source_feed, output=NullOutput()):
     proxy = None
     if source_feed.is_cloudflare : # Fuck you !
         try:
-            
             proxy = get_proxy(output)
             
-            proxies = {
-              'http': proxy.address,
-              'https': proxy.address,
-            }
+            if proxy.address != "X":
+            
+                proxies = {
+                  'http': proxy.address,
+                  'https': proxy.address,
+                }
+            proxy = None
         except:
             pass    
 
@@ -788,22 +794,21 @@ def find_proxies(out=NullOutput()):
     out.write("\nLooking for proxies\n")
     
     try:
-        req = requests.get("http://www.workingproxies.org", timeout=30)
+        req = requests.get("https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list.txt", timeout=30)
         if req.status_code == 200:
-            soup = BeautifulSoup(req.text)
+            list = req.text
             
-            tables = soup.find_all("table")
+            list = list.split("\n")
             
-            for table in tables:
-                if "class" in table.attrs and "proxies" in table["class"]:
-                    tbody = table.find("tbody")
-                    rows = tbody.find_all("tr")
-                    
-                    for i in range(20):
-                        row = rows[i]
-                        cells = row.find_all("td")
-                        
-                        WebProxy(address="http://{ip}:{port}".format(ip=cells[0].text, port=cells[1].text)).save()
+            # remove header
+            list = list[4:]
+            
+            for item in list:
+                if ":" in item:
+                    item = item.split(" ")[0]
+                    WebProxy(address=item).save()
+
+
                         
     except Exception as ex:
         logging.error("Proxy scrape error: {}".format(str(ex)))
@@ -811,9 +816,9 @@ def find_proxies(out=NullOutput()):
             
     if WebProxy.objects.count() == 0:
         # something went wrong.
-        # to stop infinite loops we will insert a duff proxy now
-        # which will break the next read, but it would be broken anyway
-        WebProxy(address="http://127.0.0.1:9876").save()
+        # to stop infinite loops we will insert duff proxys now
+        for i in range(20):
+            WebProxy(address="X").save()
         out.write("No proxies found.\n")
     
     
