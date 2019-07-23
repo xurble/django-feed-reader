@@ -34,17 +34,17 @@ def _customize_sanitizer(fp):
 
     bad_attributes = [
         "align",
-        "valign"
+        "valign",
+        "hspace"
     ]
     
     for item in bad_attributes:
         try:
-            fp._HTMLSanitizer.acceptable_attributes.remove(item)
+            if item in fp._HTMLSanitizer.acceptable_attributes:
+                fp._HTMLSanitizer.acceptable_attributes.remove(item)
         except Exception:
             logging.debug("Could not remove {}".format(item))
             
-_customize_sanitizer(feedparser)
-
 
 def get_agent(source_feed):
 
@@ -169,7 +169,7 @@ def read_feed(source_feed, output=NullOutput()):
 
         if proxy:
             source_feed.lastResult = "Proxy failed. Next retry will use new proxy"
-            source_feed.status_code = 1 # this will stop us increasing the interval
+            source_feed.status_code = 1  # this will stop us increasing the interval
 
             output.write("\nBurning the proxy.")
             proxy.delete()
@@ -382,6 +382,7 @@ def parse_feed_xml(source_feed, feed_content, output):
     #output.write(ret.content)           
     try:
         
+        _customize_sanitizer(feedparser)
         f = feedparser.parse(feed_content) #need to start checking feed parser errors here
         entries = f['entries']
         if len(entries):
@@ -471,7 +472,6 @@ def parse_feed_xml(source_feed, feed_content, output):
             except Exception as ex:
                 p.link = ''
             p.title = title
-
 
             try:
                 p.image_url = e.image.href
@@ -602,6 +602,7 @@ def parse_feed_json(source_feed, feed_content, output):
             pass
             
             
+        _customize_sanitizer(feedparser)
         source_feed.name = feedparser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
 
         if "icon" in f:
@@ -648,8 +649,9 @@ def parse_feed_json(source_feed, feed_content, output):
                 title = ""      
                 
             # borrow the RSS parser's sanitizer
-
+            _customize_sanitizer(feedparser)
             body  = feedparser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
+            _customize_sanitizer(feedparser)
             title = feedparser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates
 
@@ -749,7 +751,7 @@ def parse_feed_json(source_feed, feed_content, output):
 def test_feed(source, cache=False, output=NullOutput()):
 
 
-    headers = { "User-Agent": get_agent(source)  } #identify ourselves and also stop our requests getting picked up by google's cache
+    headers = { "User-Agent": get_agent(source)  } #identify ourselves and also stop our requests getting picked up by any cache
 
     if cache:
         if source.etag:
@@ -762,7 +764,7 @@ def test_feed(source, cache=False, output=NullOutput()):
 
     output.write("\n" + str(headers))
 
-    ret = requests.get(source.feed_url,headers=headers,allow_redirects=False,verify=False,timeout=20)
+    ret = requests.get(source.feed_url, headers=headers, allow_redirects=False, verify=False, timeout=20)
 
     output.write("\n\n")
     

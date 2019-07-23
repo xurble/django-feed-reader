@@ -97,7 +97,24 @@ class XMLFeedsTest(BaseTest):
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.name, "safe")
+        
     
+    def test_sanitize_attrs(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="sanitizer_img_attrs.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # read the feed to update the name
+        read_feed(src)         
+        self.assertEqual(src.status_code, 200)
+
+        body = src.post_set.all()[0].body
+        
+        self.assertTrue("<img" in body)
+        self.assertFalse("align=" in body)
+        self.assertFalse("hspace=" in body)
         
 
 
