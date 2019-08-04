@@ -15,6 +15,8 @@ class Source(models.Model):
     site_url      = models.CharField(max_length=255, blank=True, null=True)
     feed_url      = models.CharField(max_length=255)
     image_url     = models.CharField(max_length=255, blank=True, null=True)
+    
+    description   = models.TextField(null=True, blank=True)
 
     last_polled   = models.DateTimeField(max_length=255, blank=True, null=True)
     due_poll      = models.DateTimeField(default='1900-01-01 00:00:00') # default to distant past to put new sources to front of queue

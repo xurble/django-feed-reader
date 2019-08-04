@@ -413,6 +413,21 @@ def parse_feed_xml(source_feed, feed_content, output):
         except:
             pass
 
+
+        # either of these is fine, prefer description over summary
+        # also feedparser will give us itunes:summary etc if there
+        try:
+            source_feed.description = f.feed.summary
+        except:
+            pass
+
+        try:
+            source_feed.description = f.feed.description
+        except:
+            pass
+
+
+
         #output.write(entries)
         entries.reverse() # Entries are typically in reverse chronological order - put them in right order
         for e in entries:
@@ -497,7 +512,7 @@ def parse_feed_xml(source_feed, feed_content, output):
                 p.save()
                 # output.write(p.body)
             except Exception as ex:
-                import pdb; pdb.set_trace()
+                # import pdb; pdb.set_trace()
                 output.write(str(ex))
 
 
@@ -587,6 +602,7 @@ def parse_feed_json(source_feed, feed_content, output):
     
     if ok:
     
+    
         if "expired" in f and f["expired"]:
             # This feed says it is done
             # TODO: permanently disable
@@ -600,7 +616,11 @@ def parse_feed_json(source_feed, feed_content, output):
             source_feed.name = f["title"]
         except Exception as ex:
             pass
-            
+
+
+        if "description" in f:
+            _customize_sanitizer(feedparser)
+            source_feed.description = feedparser._sanitizeHTML(f["description"], "utf-8", 'text/html')
             
         _customize_sanitizer(feedparser)
         source_feed.name = feedparser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')

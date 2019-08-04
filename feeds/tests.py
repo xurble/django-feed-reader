@@ -63,6 +63,22 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(src.etag, "an-etag")
 
 
+    def test_podcast(self, mock):
+    
+        self._populate_mock(mock, status=200, test_file="podcast.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)        
+        
+        self.assertEqual(src.description, 'SU: Three nerds discussing tech, Apple, programming, and loosely related matters.') 
+
+        self.assertEqual(src.post_set.all()[0].enclosure_set.count(), 1)
+
+
+
     def test_sanitize_1(self, mock):
     
         """
