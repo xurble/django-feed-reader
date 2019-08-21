@@ -3,6 +3,10 @@
 
 This is a simple Django module to allow you subscribe to RSS (and other) feeds.
 
+This app has no UI, it just reads and stores the feeds for you to use as you see fit.
+
+This app builds on top of the FeedParser library to pride feed management, storage, scheduling etc.
+
 ## Features
 
 * Consumes RSS, Atom and JSONFeed feeds.  
@@ -69,13 +73,13 @@ def get_those_feeds():
 
 The app does not (currently) track the read/unread state of posts within a feed.  That will need doing in your project according to your needs. 
 
-The app assumes that each feed only as one subscriber that is the project itself.  If your project can allow personal subscriptions for individual users, you can let the app know on per feed basis how many subscribers it has by settings `num_subs` on a `Source` object.
+The app assumes that each feed only has one subscriber that is the project itself.  If your project can allow personal subscriptions for individual users, you can let the app know on per feed basis how many subscribers it has by settings `num_subs` on a `Source` object.
 The app will then report this via the user agent to the feed source for analytics purposes.
 
 
 ### Dealing with Cloudflare
 
-Depending on where you run your server, you may run into problems with Cloudflare's web captcha.  Plenty of sites out there set up the Cloudflare to have default security on their RSS feed and this can block server-side RSS readers.
+Depending on where you run your server, you may run into problems with Cloudflare's web captcha.  Plenty of sites out there set up their Cloudflare to have default security on their RSS feed and this can block server-side RSS readers.
 
 It's a huge pain and affects lots of self-hosted RSS readers. Seriously, Google it.
 
