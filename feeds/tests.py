@@ -34,14 +34,15 @@ class BaseTest(TestCase):
         {"Content-Type": content_type, "etag":"an-etag"}
         
         if is_cloudflare:
-                agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=1)
+            agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=1)
 
-                mock.register_uri('GET', url, request_headers={"User-Agent": agent}, status_code=status, content=content, headers=ret_headers)
+            mock.register_uri('GET', url, request_headers={"User-Agent": agent}, status_code=status, content=content, headers=ret_headers)
         else:
             if etag is None:
                 mock.register_uri('GET', url, status_code=status, content=content, headers=ret_headers)
             else:
                 mock.register_uri('GET', url, request_headers={'If-None-Match': etag}, status_code=status, content=content, headers=ret_headers)
+                
 
 
 @requests_mock.Mocker()
