@@ -14,6 +14,8 @@ This is a simple Django module to allow you subscribe to RSS (and other) feeds.
 
 ## Installation
 
+`django-feed-reeder` is written in Python 3 and supports Django 2.2+
+
 1. `pip install django-feed-reader`
 2. Add `feeds` to your `INSTALLED_APPS`
 3. Setup some values in `settings.py` so that your feed reader politely announces itself to servers:
