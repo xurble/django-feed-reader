@@ -19,7 +19,7 @@ class Source(models.Model):
     description   = models.TextField(null=True, blank=True)
 
     last_polled   = models.DateTimeField(max_length=255, blank=True, null=True)
-    due_poll      = models.DateTimeField(default='1900-01-01 00:00:00') # default to distant past to put new sources to front of queue
+    due_poll      = models.DateTimeField(default=datetime.datetime(1900, 1, 1)) # default to distant past to put new sources to front of queue
     etag          = models.CharField(max_length=255, blank=True, null=True)
     last_modified = models.CharField(max_length=255, blank=True, null=True) # just pass this back and forward between server and me , no need to parse
     
@@ -108,7 +108,7 @@ class Post(models.Model):
 
     # an entry in a feed
     
-    source        = models.ForeignKey(Source, on_delete=models.CASCADE)
+    source        = models.ForeignKey(Source, on_delete=models.CASCADE, related_name='posts')
     title         = models.TextField(blank=True)
     body          = models.TextField()
     link          = models.CharField(max_length=512, blank=True, null=True)
@@ -147,7 +147,7 @@ class Post(models.Model):
         
 class Enclosure(models.Model):
 
-    post   = models.ForeignKey(Post, on_delete=models.CASCADE)
+    post   = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='enclosures')
     length = models.IntegerField(default=0)
     href   = models.CharField(max_length=512)
     type   = models.CharField(max_length=256) 
