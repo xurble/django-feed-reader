@@ -518,7 +518,7 @@ def parse_feed_xml(source_feed, feed_content, output):
 
             try:
                 seen_files = []
-                for ee in list(p.enclosure_set.all()):
+                for ee in list(p.enclosures.all()):
                     # check existing enclosure is still there
                     found_enclosure = False
                     for pe in e["enclosures"]:
@@ -707,7 +707,7 @@ def parse_feed_json(source_feed, feed_content, output):
 
             try:
                 seen_files = []
-                for ee in list(p.enclosure_set.all()):
+                for ee in list(p.enclosures.all()):
                     # check existing enclosure is still there
                     found_enclosure = False
                     if "attachments" in e:

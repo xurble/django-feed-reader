@@ -11,7 +11,7 @@ class SourceAdmin(admin.ModelAdmin):
     )
 
     def posts_link(self, obj=None):
-        if not obj:
+        if obj.id is None:
             return ''
         qs = obj.posts.all()
         return mark_safe('<a href="/admin/feeds/post/?source__id=%i" target="_blank">%i Posts</a>' % (obj.id, qs.count()))
@@ -30,7 +30,7 @@ class PostAdmin(admin.ModelAdmin):
     )
 
     def enclosures_link(self, obj=None):
-        if not obj:
+        if obj.id is None:
             return ''
         qs = obj.enclosures.all()
         return mark_safe('<a href="/admin/feeds/enclosure/?post__id=%i" target="_blank">%i Enclosures</a>' % (obj.id, qs.count()))

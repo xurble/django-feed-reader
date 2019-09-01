@@ -135,6 +135,8 @@ class Post(models.Model):
     @property
     def recast_link(self):
     
+        # TODO: This needs to come out, it's just for recast
+    
         #if "?" in self.link:
         #    return self.link + ("&recast_id=%d" % self.id)
         #else:
@@ -155,6 +157,8 @@ class Enclosure(models.Model):
     @property
     def recast_link(self):
     
+        # TODO: This needs to come out, it's just for recast
+
         #if "?" in self.href:
         #    return self.href + ("&recast_id=%d" % self.id)
         #else:

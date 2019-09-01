@@ -42,7 +42,7 @@ class BaseTest(TestCase):
                 mock.register_uri('GET', url, status_code=status, content=content, headers=ret_headers)
             else:
                 mock.register_uri('GET', url, request_headers={'If-None-Match': etag}, status_code=status, content=content, headers=ret_headers)
-                
+                    
 
 
 @requests_mock.Mocker()
@@ -59,7 +59,7 @@ class XMLFeedsTest(BaseTest):
         # Read the feed once to get the 1 post  and the etag
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
-        self.assertEqual(src.post_set.count(), 1) # got the one post
+        self.assertEqual(src.posts.count(), 1) # got the one post
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.etag, "an-etag")
 
@@ -76,7 +76,7 @@ class XMLFeedsTest(BaseTest):
         
         self.assertEqual(src.description, 'SU: Three nerds discussing tech, Apple, programming, and loosely related matters.') 
 
-        self.assertEqual(src.post_set.all()[0].enclosure_set.count(), 1)
+        self.assertEqual(src.posts.all()[0].enclosures.count(), 1)
 
 
 
@@ -94,7 +94,7 @@ class XMLFeedsTest(BaseTest):
         # Read the feed once to get the 1 post  and the etag
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
-        p = src.post_set.all()[0]
+        p = src.posts.all()[0]
         
         self.assertFalse("<script>" in p.body)
         
@@ -127,7 +127,7 @@ class XMLFeedsTest(BaseTest):
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
 
-        body = src.post_set.all()[0].body
+        body = src.posts.all()[0].body
         
         self.assertTrue("<img" in body)
         self.assertFalse("align=" in body)
@@ -149,7 +149,7 @@ class JSONFeedTest(BaseTest):
         # Read the feed once to get the 1 post  and the etag
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
-        self.assertEqual(src.post_set.count(), 2) # got the one post
+        self.assertEqual(src.posts.count(), 2) # got the one post
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.etag, "an-etag")
         
@@ -164,7 +164,7 @@ class JSONFeedTest(BaseTest):
         # Read the feed once to get the 1 post  and the etag
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
-        p = src.post_set.all()[0]
+        p = src.posts.all()[0]
         
         self.assertFalse("<script>" in p.body)     
 
@@ -196,9 +196,9 @@ class JSONFeedTest(BaseTest):
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
         
-        post = src.post_set.all()[0]
+        post = src.posts.all()[0]
         
-        self.assertEqual(post.enclosure_set.count(), 1)
+        self.assertEqual(post.enclosures.count(), 1)
 
 
 @requests_mock.Mocker()
@@ -250,13 +250,13 @@ class HTTPStuffTest(BaseTest):
         # Read the feed once to get the 1 post  and the etag
         read_feed(src)         
         self.assertEqual(src.status_code, 200)
-        self.assertEqual(src.post_set.count(), 1) # got the one post
+        self.assertEqual(src.posts.count(), 1) # got the one post
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.etag, "an-etag")
 
         # Read the feed again to get a 304 and a small increment to the interval
         read_feed(src)         
-        self.assertEqual(src.post_set.count(), 1) # should have no more
+        self.assertEqual(src.posts.count(), 1) # should have no more
         self.assertEqual(src.status_code, 304)
         self.assertEqual(src.interval, 70)
         self.assertTrue(src.live)
@@ -271,7 +271,7 @@ class HTTPStuffTest(BaseTest):
         
         read_feed(src)         
         self.assertEqual(src.status_code, 200)  # it returned a page, but not a  feed
-        self.assertEqual(src.post_set.count(), 0) # can't have got any
+        self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertEqual(src.interval, 120)
         self.assertTrue(src.live)
 
@@ -285,7 +285,7 @@ class HTTPStuffTest(BaseTest):
         
         read_feed(src)         
         self.assertEqual(src.status_code, 403)  # it returned a page, but not a  feed
-        self.assertEqual(src.post_set.count(), 0) # can't have got any
+        self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertFalse(src.live)
         
 
@@ -298,7 +298,7 @@ class HTTPStuffTest(BaseTest):
         
         read_feed(src)         
         self.assertEqual(src.status_code, 410)  # it returned a page, but not a  feed
-        self.assertEqual(src.post_set.count(), 0) # can't have got any
+        self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertFalse(src.live)
 
     def test_feed_not_found(self, mock):
@@ -310,7 +310,7 @@ class HTTPStuffTest(BaseTest):
         
         read_feed(src)         
         self.assertEqual(src.status_code, 404)  # it returned a page, but not a  feed
-        self.assertEqual(src.post_set.count(), 0) # can't have got any
+        self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertTrue(src.live)
         self.assertEqual(src.interval, 120)
         
@@ -330,7 +330,7 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.status_code, 200)  
         self.assertEqual(src.last_302_url, new_url)  # this is where  went
         self.assertIsNotNone(src.last_302_start)
-        self.assertEqual(src.post_set.count(), 1) # after following redirect will have 1 post
+        self.assertEqual(src.posts.count(), 1) # after following redirect will have 1 post
         self.assertEqual(src.interval, 60)
         self.assertTrue(src.live)
 
@@ -339,7 +339,7 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.status_code, 200)  # it returned a page, but not a  feed
         self.assertEqual(src.last_302_url, new_url)  # this is where  went
         self.assertIsNotNone(src.last_302_start)
-        self.assertEqual(src.post_set.count(), 1) # after following redirect will have 1 post
+        self.assertEqual(src.posts.count(), 1) # after following redirect will have 1 post
         self.assertEqual(src.interval, 80)
         self.assertTrue(src.live)
 
@@ -351,7 +351,7 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.status_code, 200)  
         self.assertEqual(src.last_302_url, ' ')  
         self.assertIsNone(src.last_302_start)
-        self.assertEqual(src.post_set.count(), 1) 
+        self.assertEqual(src.posts.count(), 1) 
         self.assertEqual(src.interval, 100)
         self.assertEqual(src.feed_url, new_url)
         self.assertTrue(src.live)
@@ -373,7 +373,7 @@ class HTTPStuffTest(BaseTest):
 
         read_feed(src)         
         self.assertEqual(src.status_code, 200)  
-        self.assertEqual(src.post_set.count(), 1) 
+        self.assertEqual(src.posts.count(), 1) 
         self.assertEqual(src.interval, 60)
         self.assertTrue(src.live)
 
@@ -387,7 +387,7 @@ class HTTPStuffTest(BaseTest):
         
         read_feed(src)         
         self.assertEqual(src.status_code, 500)  # error
-        self.assertEqual(src.post_set.count(), 0) # can't have got any
+        self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertTrue(src.live)       
         self.assertEqual(src.interval, 120)
         
@@ -401,7 +401,7 @@ class HTTPStuffTest(BaseTest):
         
         read_feed(src)         
         self.assertEqual(src.status_code, 503)  # error!
-        self.assertEqual(src.post_set.count(), 0) # can't have got any
+        self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertTrue(src.live)       
         self.assertEqual(src.interval, 120)
  
