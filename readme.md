@@ -5,7 +5,7 @@ This is a simple Django module to allow you subscribe to RSS (and other) feeds.
 
 This app has no UI, it just reads and stores the feeds for you to use as you see fit.
 
-This app builds on top of the FeedParser library to pride feed management, storage, scheduling etc.
+This app builds on top of the FeedParser library to provide feed management, storage, scheduling etc.
 
 ## Features
 
