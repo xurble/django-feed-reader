@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from feeds.models import Source, Enclosure, Post, WebProxy
 
-import feedparser
+import feedparser as parser
 
 import time
 import datetime
@@ -35,7 +35,10 @@ def _customize_sanitizer(fp):
     bad_attributes = [
         "align",
         "valign",
-        "hspace"
+        "hspace",
+        "class",
+        "width",
+        "height"
     ]
     
     for item in bad_attributes:
@@ -382,8 +385,8 @@ def parse_feed_xml(source_feed, feed_content, output):
     #output.write(ret.content)           
     try:
         
-        _customize_sanitizer(feedparser)
-        f = feedparser.parse(feed_content) #need to start checking feed parser errors here
+        _customize_sanitizer(parser)
+        f = parser.parse(feed_content) #need to start checking feed parser errors here
         entries = f['entries']
         if len(entries):
             source_feed.last_success = timezone.now() #in case we start auto unsubscribing long dead feeds
@@ -619,11 +622,11 @@ def parse_feed_json(source_feed, feed_content, output):
 
 
         if "description" in f:
-            _customize_sanitizer(feedparser)
-            source_feed.description = feedparser._sanitizeHTML(f["description"], "utf-8", 'text/html')
+            _customize_sanitizer(parser)
+            source_feed.description = parser._sanitizeHTML(f["description"], "utf-8", 'text/html')
             
-        _customize_sanitizer(feedparser)
-        source_feed.name = feedparser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
+        _customize_sanitizer(parser)
+        source_feed.name = parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
 
         if "icon" in f:
             source_feed.image_url = f["icon"]
@@ -669,10 +672,10 @@ def parse_feed_json(source_feed, feed_content, output):
                 title = ""      
                 
             # borrow the RSS parser's sanitizer
-            _customize_sanitizer(feedparser)
-            body  = feedparser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
-            _customize_sanitizer(feedparser)
-            title = feedparser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
+            _customize_sanitizer(parser)
+            body  = parser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
+            _customize_sanitizer(parser)
+            title = parser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates
 
             if "banner_image" in e:
