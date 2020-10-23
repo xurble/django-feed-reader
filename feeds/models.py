@@ -18,15 +18,15 @@ class Source(models.Model):
     
     description   = models.TextField(null=True, blank=True)
 
-    last_polled   = models.DateTimeField(max_length=255, blank=True, null=True)
+    last_polled   = models.DateTimeField(blank=True, null=True)
     due_poll      = models.DateTimeField(default=datetime.datetime(1900, 1, 1)) # default to distant past to put new sources to front of queue
     etag          = models.CharField(max_length=255, blank=True, null=True)
     last_modified = models.CharField(max_length=255, blank=True, null=True) # just pass this back and forward between server and me , no need to parse
     
     last_result    = models.CharField(max_length=255,blank=True,null=True)
     interval       = models.PositiveIntegerField(default=400)
-    last_success   = models.DateTimeField(null=True)
-    last_change    = models.DateTimeField(null=True)
+    last_success   = models.DateTimeField(blank=True, null=True)
+    last_change    = models.DateTimeField(blank=True, null=True)
     live           = models.BooleanField(default=True)
     status_code    = models.PositiveIntegerField(default=0)
     last_302_url   = models.CharField(max_length=255, null=True, blank=True)
