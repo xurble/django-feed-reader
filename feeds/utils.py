@@ -849,8 +849,12 @@ def update_source_name(current_name, new_name):
     """
     Only autoupdate the source name when retrieving feeds if it is currently
     empty or the parameter allows it (default: true)
-"""
-    if not current_name or settings.FEEDS_SOURCE_NAME_AUTOUPDATE:
+    """
+    
+    # Never attempt to update if the new name is empty
+    if not new_name:
+        return current_name
+    elif not current_name or settings.FEEDS_SOURCE_NAME_AUTOUPDATE:
         return new_name
     else:
         return current_name
