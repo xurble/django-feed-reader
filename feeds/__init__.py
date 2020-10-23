@@ -15,6 +15,7 @@ for h in settings.ALLOWED_HOSTS:
 _DEFAULTS = {
     "FEEDS_USER_AGENT": "django-feed-reader",  
     "FEEDS_SERVER": server,
+    "FEEDS_SOURCE_NAME_AUTOUPDATE": True,
 }
 
 for key, value in _DEFAULTS.items():

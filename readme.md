@@ -88,7 +88,12 @@ It's a huge pain and affects lots of self-hosted RSS readers. Seriously, Google 
 Feeds blocked by Cloudflare will have the `is_cloudflare` flag set on their `Source` and will update on a best-efforts basis.
 
  
+## Preventing sources name to be automatically updated when polling feeds
 
+If you have feeds with generic names (for example, if you have several feeds simply named "Feed") and you prefer to set them manually, you can add the following line in your `settings.py`:
 
-
+```
+FEEDS_SOURCE_NAME_AUTOUPDATE = False
+```
+If set to False, the name will only be updated if the current one is empty.
 
