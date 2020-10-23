@@ -401,7 +401,7 @@ def parse_feed_xml(source_feed, feed_content, output):
     
     if ok:
         try:
-            source_feed.name = f.feed.title
+            source_feed.name = update_source_name(source_feed.name, f.feed.title)
         except Exception as ex:
             pass
 
@@ -616,7 +616,7 @@ def parse_feed_json(source_feed, feed_content, output):
 
         try:
             source_feed.site_url = f["home_page_url"]
-            source_feed.name = f["title"]
+            source_feed.name = update_source_name(source_feed.name, f["title"])
         except Exception as ex:
             pass
 
@@ -626,7 +626,7 @@ def parse_feed_json(source_feed, feed_content, output):
             source_feed.description = parser._sanitizeHTML(f["description"], "utf-8", 'text/html')
             
         _customize_sanitizer(parser)
-        source_feed.name = parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
+        source_feed.name = update_source_name(source_feed.name, parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html'))
 
         if "icon" in f:
             source_feed.image_url = f["icon"]
@@ -845,4 +845,12 @@ def find_proxies(out=NullOutput()):
             WebProxy(address="X").save()
         out.write("No proxies found.\n")
     
-    
+def update_source_name(current_name, new_name):
+    """
+    Only autoupdate the source name when retrieving feeds if it is currently
+    empty or the parameter allows it (default: true)
+"""
+    if not current_name or settings.FEEDS_SOURCE_NAME_AUTOUPDATE:
+        return new_name
+    else:
+        return current_name
