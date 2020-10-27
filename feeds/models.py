@@ -105,6 +105,15 @@ class Source(models.Model):
         return css
 
 
+class Tag(models.Model):
+    term = models.CharField(max_length=256)
+    label = models.CharField(max_length=256, blank=True, null=True)
+    scheme = models.CharField(max_length=256, blank=True, null=True)
+
+    def __str__(self):
+        return self.term
+
+
 class Post(models.Model):
 
     # an entry in a feed
@@ -119,6 +128,7 @@ class Post(models.Model):
     author = models.CharField(max_length=255, blank=True, null=True)
     index = models.IntegerField(db_index=True)
     image_url = models.CharField(max_length=255, blank=True, null=True)
+    tags = models.ManyToManyField(Tag)
 
     @property
     def title_url_encoded(self):
@@ -167,10 +177,6 @@ class Enclosure(models.Model):
         #    return self.href + ("?recast_id=%d" % self.id)
 
         return "/enclosure/%d/" % self.id
-
-
-class Tag(models.Model):
-    pass
 
 
 class WebProxy(models.Model):

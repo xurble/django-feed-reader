@@ -1,7 +1,7 @@
 from django.db.models import Q
 from django.utils import timezone
 
-from feeds.models import Source, Enclosure, Post, WebProxy
+from feeds.models import Source, Enclosure, Post, WebProxy, Tag
 
 import feedparser as parser
 
@@ -21,6 +21,8 @@ from django.conf import settings
 import hashlib
 from random import choice
 import logging
+
+from pprint import pprint
 
 
 class NullOutput(object):
@@ -468,7 +470,6 @@ def parse_feed_xml(source_feed, feed_content, output):
         # output.write(entries)
         entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
         for e in entries:
-
             # we are going to take the longest
             body = ""
 
@@ -613,6 +614,16 @@ def parse_feed_xml(source_feed, feed_content, output):
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
+
+            try:
+                if "tags" in e:
+                    for t in e.tags:
+                        tag, created = Tag.objects.get_or_create(**t)
+                        p.tags.add(tag)
+                        print(f"Tag {tag} added to post {p}")
+            except Exception as ex:
+                output.write(str(ex))
+                output.write(f"couldn't add tag {tag} to post {p}")
 
     return (ok, changed)
 
@@ -807,6 +818,16 @@ def parse_feed_json(source_feed, feed_content, output):
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
+
+            try:
+                if "tags" in e:
+                    for t in e["tags"]:
+                        tag, created = Tag.objects.get_or_create(**t)
+                        p.tags.add(tag)
+                        print(f"Tag {tag} added to post {p}")
+            except Exception as ex:
+                output.write(str(ex))
+                output.write(f"couldn't add tag {tag} to post {p}")
 
     return (ok, changed)
 
