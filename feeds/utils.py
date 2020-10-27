@@ -28,7 +28,7 @@ class NullOutput(object):
     Little class for when we have no outputter
     """
 
-    def write(self, str):
+    def write(self, string):
         pass
 
 
@@ -47,23 +47,23 @@ def dateparser_handler(date_string):
 parser.registerDateHandler(dateparser_handler)
 
 
-def _customize_sanitizer(fp):
+def _customize_sanitizer(feedparser):
 
     bad_attributes = ["align", "valign", "hspace", "class", "width", "height"]
 
     for item in bad_attributes:
         try:
-            if item in fp._HTMLSanitizer.acceptable_attributes:
-                fp._HTMLSanitizer.acceptable_attributes.remove(item)
+            if item in feedparser._HTMLSanitizer.acceptable_attributes:
+                feedparser._HTMLSanitizer.acceptable_attributes.remove(item)
         except Exception:
-            logging.debug("Could not remove {}".format(item))
+            logging.debug("Could not remove {item}", item=item)
 
 
 def get_agent(source_feed):
 
     if source_feed.is_cloudflare:
         agent = random_user_agent()
-        logging.error("using agent: {}".format(agent))
+        logging.error("using agent: {agent}", agent=agent)
     else:
         agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(
             user_agent=settings.FEEDS_USER_AGENT,
@@ -105,7 +105,7 @@ def fix_relative(html, url):
         html = html.replace("src='/", "src='%s/" % base)
         html = html.replace('src="/', 'src="%s/' % base)
 
-    except Exception as ex:
+    except Exception:
         pass
 
     return html
@@ -155,7 +155,7 @@ def read_feed(source_feed, output=NullOutput()):
                     "http": "http://" + proxy.address,
                     "https": "https://" + proxy.address,
                 }
-        except:
+        except Exception:
             pass
 
     if source_feed.etag:
@@ -178,7 +178,7 @@ def read_feed(source_feed, output=NullOutput()):
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
     except Exception as ex:
-        logging.error("Fetch feed error: " + str(ex))
+        logging.error("Fetch feed error: {ex}", ex=ex)
         source_feed.last_result = ("Fetch error:" + str(ex))[:255]
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
@@ -193,7 +193,7 @@ def read_feed(source_feed, output=NullOutput()):
 
     if ret is None and source_feed.status_code == 1:  # er ??
         pass
-    elif ret == None or source_feed.status_code == 0:
+    elif ret is None or source_feed.status_code == 0:
         source_feed.interval += 120
     elif ret.status_code < 200 or ret.status_code >= 500:
         # errors, impossible return codes
@@ -262,10 +262,9 @@ def read_feed(source_feed, output=NullOutput()):
                 source_feed.last_result = "Moved"
             else:
                 source_feed.last_result = "Feed has moved but no location provided"
-        except Exception as Ex:
+        except Exception:
             output.write("\nError redirecting.")
             source_feed.last_result = "Error redirecting feed to " + new_url
-            pass
     elif (
         ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307
     ):  # Temporary redirect
@@ -291,8 +290,8 @@ def read_feed(source_feed, output=NullOutput()):
 
             if source_feed.last_302_url == new_url:
                 # this is where we 302'd to last time
-                td = timezone.now() - source_feed.last_302_start
-                if td.days > 60:
+                timedelta = timezone.now() - source_feed.last_302_start
+                if timedelta.days > 60:
                     source_feed.feed_url = new_url
                     source_feed.last_302_url = " "
                     source_feed.last_302_start = None
@@ -377,8 +376,8 @@ def read_feed(source_feed, output=NullOutput()):
         "\nUpdating source_feed.interval from %d to %d\n"
         % (old_interval, source_feed.interval)
     )
-    td = datetime.timedelta(minutes=source_feed.interval)
-    source_feed.due_poll = timezone.now() + td
+    timedelta = datetime.timedelta(minutes=source_feed.interval)
+    source_feed.due_poll = timezone.now() + timedelta
     source_feed.save()
 
 
@@ -441,29 +440,29 @@ def parse_feed_xml(source_feed, feed_content, output):
     if ok:
         try:
             source_feed.name = update_source_name(source_feed.name, f.feed.title)
-        except Exception as ex:
+        except Exception:
             pass
 
         try:
             source_feed.site_url = f.feed.link
-        except Exception as ex:
+        except Exception:
             pass
 
         try:
             source_feed.image_url = f.feed.image.href
-        except:
+        except Exception:
             pass
 
         # either of these is fine, prefer description over summary
         # also feedparser will give us itunes:summary etc if there
         try:
             source_feed.description = f.feed.summary
-        except:
+        except Exception:
             pass
 
         try:
             source_feed.description = f.feed.description
-        except:
+        except Exception:
             pass
 
         # output.write(entries)
@@ -515,18 +514,18 @@ def parse_feed_xml(source_feed, feed_content, output):
 
             try:
                 title = e.title
-            except Exception as ex:
+            except Exception:
                 title = ""
 
             try:
                 p.link = e.link
-            except Exception as ex:
+            except Exception:
                 p.link = ""
             p.title = title
 
             try:
                 p.image_url = e.image.href
-            except:
+            except Exception:
                 pass
 
             try:
@@ -540,7 +539,7 @@ def parse_feed_xml(source_feed, feed_content, output):
                     time.mktime(time_struct)
                 ).replace(tzinfo=timezone.utc)
 
-            except Exception as ex:
+            except Exception:
                 output.write("CREATED ERROR")
 
             p.guid = guid
@@ -568,15 +567,15 @@ def parse_feed_xml(source_feed, feed_content, output):
 
                             try:
                                 ee.length = int(pe["length"])
-                            except:
+                            except Exception:
                                 ee.length = 0
 
                             try:
-                                type = pe["type"]
-                            except:
-                                type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
+                                file_type = pe["type"]
+                            except Exception:
+                                file_type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
 
-                            ee.type = type
+                            ee.type = file_type
                             ee.save()
                             break
                     if not found_enclosure:
@@ -589,19 +588,19 @@ def parse_feed_xml(source_feed, feed_content, output):
 
                             try:
                                 length = int(pe["length"])
-                            except:
+                            except Exception:
                                 length = 0
 
                             try:
-                                type = pe["type"]
-                            except:
-                                type = "audio/mpeg"
+                                file_type = pe["type"]
+                            except Exception:
+                                file_type = "audio/mpeg"
 
                             ee = Enclosure(
-                                post=p, href=pe["href"], length=length, type=type
+                                post=p, href=pe["href"], length=length, type=file_type
                             )
                             ee.save()
-                    except Exception as ex:
+                    except Exception:
                         pass
             except Exception as ex:
                 if output:
@@ -764,11 +763,11 @@ def parse_feed_json(source_feed, feed_content, output):
                                     ee.length = 0
 
                                 try:
-                                    type = pe["mime_type"]
+                                    file_type = pe["mime_type"]
                                 except:
-                                    type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
+                                    file_type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
 
-                                ee.type = type
+                                ee.type = file_type
                                 ee.save()
                                 break
                     if not found_enclosure:
@@ -787,12 +786,12 @@ def parse_feed_json(source_feed, feed_content, output):
                                     length = 0
 
                                 try:
-                                    type = pe["mime_type"]
+                                    filetype = pe["mime_type"]
                                 except:
-                                    type = "audio/mpeg"
+                                    filetype = "audio/mpeg"
 
                                 ee = Enclosure(
-                                    post=p, href=pe["url"], length=length, type=type
+                                    post=p, href=pe["url"], length=length, type=filetype
                                 )
                                 ee.save()
                         except Exception as ex:
