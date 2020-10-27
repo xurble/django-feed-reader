@@ -1,12 +1,9 @@
-from django.db import models
-from django.utils.timezone import utc
-
-import time
 import datetime
 from urllib.parse import urlencode
 import logging
-import sys
-import email
+
+from django.db import models
+from django.utils.timezone import utc
 
 
 class Source(models.Model):
@@ -65,7 +62,7 @@ class Source(models.Model):
 
         if not self.live:
             css = "background-color:#ccc;"
-        elif self.last_change == None or self.last_success == None:
+        elif self.last_change is None or self.last_success is None:
             css = "background-color:#D00;color:white"
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=utc) - self.last_change
@@ -88,7 +85,7 @@ class Source(models.Model):
 
         if not self.live:
             css = "#ccc;"
-        elif self.last_change == None or self.last_success == None:
+        elif self.last_change is None or self.last_success is None:
             css = "#F00;"
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=utc) - self.last_change
@@ -108,6 +105,15 @@ class Source(models.Model):
         return css
 
 
+class Tag(models.Model):
+    term = models.CharField(max_length=256)
+    label = models.CharField(max_length=256, blank=True, null=True)
+    scheme = models.CharField(max_length=256, blank=True, null=True)
+
+    def __str__(self):
+        return self.term
+
+
 class Post(models.Model):
 
     # an entry in a feed
@@ -122,6 +128,7 @@ class Post(models.Model):
     author = models.CharField(max_length=255, blank=True, null=True)
     index = models.IntegerField(db_index=True)
     image_url = models.CharField(max_length=255, blank=True, null=True)
+    tags = models.ManyToManyField(Tag)
 
     @property
     def title_url_encoded(self):
@@ -130,7 +137,7 @@ class Post(models.Model):
             if len(ret) > 2:
                 ret = ret[2:]
         except:
-            logging.info("Failed to url encode title of post {}".format(self.id))
+            logging.info("Failed to url encode title of post {id}", id=self.id)
             ret = ""
 
     def __str__(self):
