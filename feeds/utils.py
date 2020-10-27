@@ -7,6 +7,7 @@ import feedparser as parser
 
 import time
 import datetime
+import dateparser
 
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -29,6 +30,21 @@ class NullOutput(object):
 
     def write(self, str):
         pass
+
+
+def dateparser_handler(date_string):
+    """
+    Allows feedparser to use the dateparser module for identifying dates.
+    """
+    dp_settings = {"PREFER_DAY_OF_MONTH": "first", "DATE_ORDER": "YMD"}
+
+    try:
+        return dateparser.parse(date_string, settings=dp_settings).utctimetuple()
+    except AttributeError:
+        pass
+
+
+parser.registerDateHandler(dateparser_handler)
 
 
 def _customize_sanitizer(fp):
@@ -514,8 +530,14 @@ def parse_feed_xml(source_feed, feed_content, output):
                 pass
 
             try:
+                # If there is no published_parsed entry, try updated_parsed
+                if "published_parsed" in e:
+                    time_struct = e.published_parsed
+                else:
+                    time_struct = e.updated_parsed
+
                 p.created = datetime.datetime.fromtimestamp(
-                    time.mktime(e.published_parsed)
+                    time.mktime(time_struct)
                 ).replace(tzinfo=timezone.utc)
 
             except Exception as ex:
