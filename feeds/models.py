@@ -1,9 +1,12 @@
+from django.db import models
+from django.utils.timezone import utc
+
+import time
 import datetime
 from urllib.parse import urlencode
 import logging
-
-from django.db import models
-from django.utils.timezone import utc
+import sys
+import email
 
 
 class Source(models.Model):
@@ -62,7 +65,7 @@ class Source(models.Model):
 
         if not self.live:
             css = "background-color:#ccc;"
-        elif self.last_change is None or self.last_success is None:
+        elif self.last_change == None or self.last_success == None:
             css = "background-color:#D00;color:white"
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=utc) - self.last_change
@@ -85,7 +88,7 @@ class Source(models.Model):
 
         if not self.live:
             css = "#ccc;"
-        elif self.last_change is None or self.last_success is None:
+        elif self.last_change == None or self.last_success == None:
             css = "#F00;"
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=utc) - self.last_change
@@ -127,7 +130,7 @@ class Post(models.Model):
             if len(ret) > 2:
                 ret = ret[2:]
         except:
-            logging.info("Failed to url encode title of post {id}", id=self.id)
+            logging.info("Failed to url encode title of post {}".format(self.id))
             ret = ""
 
     def __str__(self):
@@ -167,10 +170,6 @@ class Enclosure(models.Model):
         #    return self.href + ("?recast_id=%d" % self.id)
 
         return "/enclosure/%d/" % self.id
-
-
-class Tag(models.Model):
-    pass
 
 
 class WebProxy(models.Model):
