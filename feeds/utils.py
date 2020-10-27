@@ -22,32 +22,26 @@ from random import choice
 import logging
 
 
-
 class NullOutput(object):
-    # little class for when we have no outputter    
+    """
+    Little class for when we have no outputter
+    """
+
     def write(self, str):
         pass
 
 
 def _customize_sanitizer(fp):
 
+    bad_attributes = ["align", "valign", "hspace", "class", "width", "height"]
 
-    bad_attributes = [
-        "align",
-        "valign",
-        "hspace",
-        "class",
-        "width",
-        "height"
-    ]
-    
     for item in bad_attributes:
         try:
             if item in fp._HTMLSanitizer.acceptable_attributes:
                 fp._HTMLSanitizer.acceptable_attributes.remove(item)
         except Exception:
             logging.debug("Could not remove {}".format(item))
-            
+
 
 def get_agent(source_feed):
 
@@ -55,100 +49,98 @@ def get_agent(source_feed):
         agent = random_user_agent()
         logging.error("using agent: {}".format(agent))
     else:
-        agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=source_feed.num_subs)
+        agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(
+            user_agent=settings.FEEDS_USER_AGENT,
+            server=settings.FEEDS_SERVER,
+            subs=source_feed.num_subs,
+        )
 
     return agent
 
+
 def random_user_agent():
 
-    return choice([
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36 Edge/14.14393",
-        "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; .NET CLR 1.1.4322; .NET CLR 2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729)",
-        "Mozilla/5.0 (iPad; CPU OS 8_4_1 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12H321 Safari/600.1.4",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_1 like Mac OS X) AppleWebKit/603.1.30 (KHTML, like Gecko) Version/10.0 Mobile/14E304 Safari/602.1",
-        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-        "Mozilla/5.0 (Linux; Android 5.0; SAMSUNG SM-N900 Build/LRX21V) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/2.1 Chrome/34.0.1847.76 Mobile Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 6.0.1; SAMSUNG SM-G570Y Build/MMB29K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/44.0.2403.133 Mobile Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:53.0) Gecko/20100101 Firefox/53.0"
-    ])
-
+    return choice(
+        [
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Safari/605.1.15",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36 Edge/14.14393",
+            "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; .NET CLR 1.1.4322; .NET CLR 2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729)",
+            "Mozilla/5.0 (iPad; CPU OS 8_4_1 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12H321 Safari/600.1.4",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_1 like Mac OS X) AppleWebKit/603.1.30 (KHTML, like Gecko) Version/10.0 Mobile/14E304 Safari/602.1",
+            "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Mozilla/5.0 (Linux; Android 5.0; SAMSUNG SM-N900 Build/LRX21V) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/2.1 Chrome/34.0.1847.76 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 6.0.1; SAMSUNG SM-G570Y Build/MMB29K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/44.0.2403.133 Mobile Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:53.0) Gecko/20100101 Firefox/53.0",
+        ]
+    )
 
 
 def fix_relative(html, url):
 
     """ this is fucking cheesy """
-    
-    
+
     try:
         base = "/".join(url.split("/")[:3])
 
         html = html.replace("src='//", "src='http://")
         html = html.replace('src="//', 'src="http://')
 
-
         html = html.replace("src='/", "src='%s/" % base)
         html = html.replace('src="/', 'src="%s/' % base)
-    
+
     except Exception as ex:
-        pass    
+        pass
 
     return html
-        
+
 
 def update_feeds(max_feeds=3, output=NullOutput()):
 
+    todo = Source.objects.filter(Q(due_poll__lt=timezone.now()) & Q(live=True))
 
-    todo = Source.objects.filter(Q(due_poll__lt = timezone.now()) & Q(live = True))
-
-    
     output.write("Queue size is {}".format(todo.count()))
 
     sources = todo.order_by("due_poll")[:max_feeds]
 
     output.write("\nProcessing %d\n\n" % sources.count())
 
-
     for src in sources:
         read_feed(src, output)
-        
+
     # kill shit proxies
-    
-    WebProxy.objects.filter(address='X').delete()
-    
-    
+
+    WebProxy.objects.filter(address="X").delete()
+
+
 def read_feed(source_feed, output=NullOutput()):
 
     old_interval = source_feed.interval
 
-
     was302 = False
-    
+
     output.write("\n------------------------------\n")
-    
+
     source_feed.last_polled = timezone.now()
-    
+
     agent = get_agent(source_feed)
 
-    headers = { "User-Agent": agent } #identify ourselves 
-
+    headers = {"User-Agent": agent}  # identify ourselves
 
     proxies = {}
     proxy = None
-    if source_feed.is_cloudflare : # Fuck you !
+    if source_feed.is_cloudflare:  # Fuck you !
         try:
             proxy = get_proxy(output)
-            
+
             if proxy.address != "X":
-            
+
                 proxies = {
-                  'http': "http://" + proxy.address,
-                  'https': "https://" + proxy.address,
+                    "http": "http://" + proxy.address,
+                    "https": "https://" + proxy.address,
                 }
         except:
-            pass    
-
+            pass
 
     if source_feed.etag:
         headers["If-None-Match"] = str(source_feed.etag)
@@ -156,10 +148,16 @@ def read_feed(source_feed, output=NullOutput()):
         headers["If-Modified-Since"] = str(source_feed.last_modified)
 
     output.write("\nFetching %s" % source_feed.feed_url)
-    
+
     ret = None
     try:
-        ret = requests.get(source_feed.feed_url, headers=headers, allow_redirects=False, timeout=20, proxies=proxies)
+        ret = requests.get(
+            source_feed.feed_url,
+            headers=headers,
+            allow_redirects=False,
+            timeout=20,
+            proxies=proxies,
+        )
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
@@ -169,7 +167,6 @@ def read_feed(source_feed, output=NullOutput()):
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
 
-
         if proxy:
             source_feed.lastResult = "Proxy failed. Next retry will use new proxy"
             source_feed.status_code = 1  # this will stop us increasing the interval
@@ -178,129 +175,144 @@ def read_feed(source_feed, output=NullOutput()):
             proxy.delete()
             source_feed.interval /= 2
 
-
-        
-    if ret is None and source_feed.status_code == 1:   # er ??
+    if ret is None and source_feed.status_code == 1:  # er ??
         pass
     elif ret == None or source_feed.status_code == 0:
         source_feed.interval += 120
     elif ret.status_code < 200 or ret.status_code >= 500:
-        #errors, impossible return codes
+        # errors, impossible return codes
         source_feed.interval += 120
         source_feed.last_result = "Server error fetching feed (%d)" % ret.status_code
     elif ret.status_code == 404:
-        #not found
+        # not found
         source_feed.interval += 120
         source_feed.last_result = "The feed could not be found"
-    elif ret.status_code == 403 or ret.status_code == 410: #Forbidden or gone
+    elif ret.status_code == 403 or ret.status_code == 410:  # Forbidden or gone
 
-        if "Cloudflare" in ret.text or ("Server" in ret.headers and "cloudflare" in ret.headers["Server"]):
+        if "Cloudflare" in ret.text or (
+            "Server" in ret.headers and "cloudflare" in ret.headers["Server"]
+        ):
 
             if source_feed.is_cloudflare and proxy is not None:
                 # we are already proxied - this proxy on cloudflare's shit list too?
                 proxy.delete()
                 output.write("\Proxy seemed to also be blocked, burning")
                 source_feed.interval /= 2
-                source_feed.lastResult = "Proxy kind of worked but still got cloudflared."
-            else:            
+                source_feed.lastResult = (
+                    "Proxy kind of worked but still got cloudflared."
+                )
+            else:
                 source_feed.is_cloudflare = True
                 source_feed.last_result = "Blocked by Cloudflare (grr)"
         else:
             source_feed.last_result = "Feed is no longer accessible."
             source_feed.live = False
-            
 
     elif ret.status_code >= 400 and ret.status_code < 500:
-        #treat as bad request
+        # treat as bad request
         source_feed.live = False
         source_feed.last_result = "Bad request (%d)" % ret.status_code
     elif ret.status_code == 304:
-        #not modified
+        # not modified
         source_feed.interval += 10
         source_feed.last_result = "Not modified"
         source_feed.last_success = timezone.now()
-        
-        if source_feed.last_success and (timezone.now() - source_feed.last_success).days > 7:
-            source_feed.last_result = "Clearing etag/last modified due to lack of changes"
+
+        if (
+            source_feed.last_success
+            and (timezone.now() - source_feed.last_success).days > 7
+        ):
+            source_feed.last_result = (
+                "Clearing etag/last modified due to lack of changes"
+            )
             source_feed.etag = None
             source_feed.last_modified = None
-        
-        
-    
-    elif ret.status_code == 301 or ret.status_code == 308: #permenant redirect
+
+    elif ret.status_code == 301 or ret.status_code == 308:  # permenant redirect
         new_url = ""
         try:
             if "Location" in ret.headers:
                 new_url = ret.headers["Location"]
-            
+
                 if new_url[0] == "/":
-                    #find the domain from the feed
-                    
+                    # find the domain from the feed
+
                     base = "/".join(source_feed.feed_url.split("/")[:3])
-                    
-                
+
                     new_url = base + new_url
 
-
                 source_feed.feed_url = new_url
-            
+
                 source_feed.last_result = "Moved"
             else:
                 source_feed.last_result = "Feed has moved but no location provided"
-        except exception as Ex:
+        except Exception as Ex:
             output.write("\nError redirecting.")
-            source_feed.last_result = "Error redirecting feed to " + new_url  
+            source_feed.last_result = "Error redirecting feed to " + new_url
             pass
-    elif ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307: #Temporary redirect
+    elif (
+        ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307
+    ):  # Temporary redirect
         new_url = ""
         was302 = True
         try:
             new_url = ret.headers["Location"]
-            
+
             if new_url[0] == "/":
-                #find the domain from the feed
+                # find the domain from the feed
                 start = source_feed.feed_url[:8]
                 end = source_feed.feed_url[8:]
                 if end.find("/") >= 0:
-                    end = end[:end.find("/")]
-                
+                    end = end[: end.find("/")]
+
                 new_url = start + end + new_url
-                
-            
-            ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20)
+
+            ret = requests.get(
+                new_url, headers=headers, allow_redirects=True, timeout=20
+            )
             source_feed.status_code = ret.status_code
             source_feed.last_result = "Temporary Redirect to " + new_url
 
             if source_feed.last_302_url == new_url:
-                #this is where we 302'd to last time
+                # this is where we 302'd to last time
                 td = timezone.now() - source_feed.last_302_start
                 if td.days > 60:
                     source_feed.feed_url = new_url
                     source_feed.last_302_url = " "
                     source_feed.last_302_start = None
-                    source_feed.last_result = "Permanent Redirect to " + new_url 
+                    source_feed.last_result = "Permanent Redirect to " + new_url
                 else:
-                    source_feed.last_result = "Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B")
+                    source_feed.last_result = (
+                        "Temporary Redirect to "
+                        + new_url
+                        + " since "
+                        + source_feed.last_302_start.strftime("%d %B")
+                    )
 
             else:
                 source_feed.last_302_url = new_url
                 source_feed.last_302_start = timezone.now()
 
-                source_feed.last_result = "Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B")
+                source_feed.last_result = (
+                    "Temporary Redirect to "
+                    + new_url
+                    + " since "
+                    + source_feed.last_302_start.strftime("%d %B")
+                )
 
-
-        except Exception as ex:     
-            source_feed.last_result = "Failed Redirection to " + new_url +  " " + str(ex)
+        except Exception as ex:
+            source_feed.last_result = "Failed Redirection to " + new_url + " " + str(ex)
             source_feed.interval += 60
-    
-    #NOT ELIF, WE HAVE TO START THE IF AGAIN TO COPE WTIH 302
-    if ret and ret.status_code >= 200 and ret.status_code < 300: #now we are not following redirects 302,303 and so forth are going to fail here, but what the hell :)
+
+    # NOT ELIF, WE HAVE TO START THE IF AGAIN TO COPE WTIH 302
+    if (
+        ret and ret.status_code >= 200 and ret.status_code < 300
+    ):  # now we are not following redirects 302,303 and so forth are going to fail here, but what the hell :)
 
         # great!
         ok = True
-        changed = False 
-        
-        
+        changed = False
+
         if was302:
             source_feed.etag = None
             source_feed.last_modified = None
@@ -308,88 +320,99 @@ def read_feed(source_feed, output=NullOutput()):
             try:
                 source_feed.etag = ret.headers["etag"]
             except Exception as ex:
-                source_feed.etag = None                                   
+                source_feed.etag = None
             try:
                 source_feed.last_modified = ret.headers["Last-Modified"]
             except Exception as ex:
-                source_feed.last_modified = None                                   
-        
-        output.write("\netag:%s\nLast Mod:%s\n\n" % (source_feed.etag,source_feed.last_modified))
+                source_feed.last_modified = None
 
+        output.write(
+            "\netag:%s\nLast Mod:%s\n\n" % (source_feed.etag, source_feed.last_modified)
+        )
 
         content_type = "Not Set"
         if "Content-Type" in ret.headers:
             content_type = ret.headers["Content-Type"]
 
-        (ok,changed) = import_feed(source_feed=source_feed, feed_body=ret.content, content_type=content_type, output=output)
-        
+        (ok, changed) = import_feed(
+            source_feed=source_feed,
+            feed_body=ret.content,
+            content_type=content_type,
+            output=output,
+        )
+
         if ok and changed:
             source_feed.interval /= 2
-            source_feed.last_result = " OK (updated)" #and temporary redirects
+            source_feed.last_result = " OK (updated)"  # and temporary redirects
             source_feed.last_change = timezone.now()
-            
+
         elif ok:
             source_feed.last_result = "OK"
-            source_feed.interval += 20 # we slow down feeds a little more that don't send headers we can use
-        else: #not OK
+            source_feed.interval += 20  # we slow down feeds a little more that don't send headers we can use
+        else:  # not OK
             source_feed.interval += 120
-            
+
     if source_feed.interval < 60:
-        source_feed.interval = 60 # no less than 1 hour
+        source_feed.interval = 60  # no less than 1 hour
     if source_feed.interval > (60 * 24):
-        source_feed.interval = (60 * 24) # no more than a day
-    
-    output.write("\nUpdating source_feed.interval from %d to %d\n" % (old_interval, source_feed.interval))
+        source_feed.interval = 60 * 24  # no more than a day
+
+    output.write(
+        "\nUpdating source_feed.interval from %d to %d\n"
+        % (old_interval, source_feed.interval)
+    )
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
     source_feed.save()
-        
+
 
 def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
 
-
     ok = False
     changed = False
-    
+
     if "xml" in content_type or feed_body[0:1] == b"<":
-        (ok,changed) = parse_feed_xml(source_feed, feed_body, output)
+        (ok, changed) = parse_feed_xml(source_feed, feed_body, output)
     elif "json" in content_type or feed_body[0:1] == b"{":
-        (ok,changed) = parse_feed_json(source_feed, str(feed_body, "utf-8"), output)
+        (ok, changed) = parse_feed_json(source_feed, str(feed_body, "utf-8"), output)
     else:
         ok = False
         source_feed.last_result = "Unknown Feed Type: " + content_type
 
     if ok and changed:
-        source_feed.last_result = " OK (updated)" #and temporary redirects
+        source_feed.last_result = " OK (updated)"  # and temporary redirects
         source_feed.last_change = timezone.now()
-        
+
         idx = source_feed.max_index
         # give indices to posts based on created date
-        posts = Post.objects.filter(Q(source=source_feed) & Q(index=0)).order_by("created")
+        posts = Post.objects.filter(Q(source=source_feed) & Q(index=0)).order_by(
+            "created"
+        )
         for p in posts:
             idx += 1
             p.index = idx
             p.save()
-            
-        source_feed.max_index = idx
-    
-    return (ok, changed)
-    
 
-    
+        source_feed.max_index = idx
+
+    return (ok, changed)
+
+
 def parse_feed_xml(source_feed, feed_content, output):
 
     ok = True
-    changed = False 
+    changed = False
 
-    #output.write(ret.content)           
+    # output.write(ret.content)
     try:
-        
+
         _customize_sanitizer(parser)
-        f = parser.parse(feed_content) #need to start checking feed parser errors here
-        entries = f['entries']
+        f = parser.parse(feed_content)  # need to start checking feed parser errors here
+        entries = f["entries"]
         if len(entries):
-            source_feed.last_success = timezone.now() #in case we start auto unsubscribing long dead feeds
+            source_feed.last_success = (
+                timezone.now()
+            )  # in case we start auto unsubscribing long dead feeds
         else:
             source_feed.last_result = "Feed is empty"
             ok = False
@@ -398,7 +421,7 @@ def parse_feed_xml(source_feed, feed_content, output):
         source_feed.last_result = "Feed Parse Error"
         entries = []
         ok = False
-    
+
     if ok:
         try:
             source_feed.name = update_source_name(source_feed.name, f.feed.title)
@@ -409,13 +432,11 @@ def parse_feed_xml(source_feed, feed_content, output):
             source_feed.site_url = f.feed.link
         except Exception as ex:
             pass
-    
 
         try:
             source_feed.image_url = f.feed.image.href
         except:
             pass
-
 
         # either of these is fine, prefer description over summary
         # also feedparser will give us itunes:summary etc if there
@@ -429,21 +450,18 @@ def parse_feed_xml(source_feed, feed_content, output):
         except:
             pass
 
-
-
-        #output.write(entries)
-        entries.reverse() # Entries are typically in reverse chronological order - put them in right order
+        # output.write(entries)
+        entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
         for e in entries:
-        
 
             # we are going to take the longest
             body = ""
-            
+
             if hasattr(e, "content"):
                 for c in e.content:
                     if len(c.value) > len(body):
                         body = c.value
-            
+
             if hasattr(e, "summary"):
                 if len(e.summary) > len(body):
                     body = e.summary
@@ -456,9 +474,8 @@ def parse_feed_xml(source_feed, feed_content, output):
                 if len(e.description) > len(body):
                     body = e.description
 
-
             body = fix_relative(body, source_feed.site_url)
-            
+
             try:
                 guid = e.guid
             except Exception as ex:
@@ -468,9 +485,9 @@ def parse_feed_xml(source_feed, feed_content, output):
                     m = hashlib.md5()
                     m.update(body.encode("utf-8"))
                     guid = m.hexdigest()
-                    
+
             try:
-                p  = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
+                p = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
                 output.write("EXISTING " + guid + "\n")
 
             except Exception as ex:
@@ -479,16 +496,16 @@ def parse_feed_xml(source_feed, feed_content, output):
                 p.found = timezone.now()
                 changed = True
                 p.source = source_feed
-    
+
             try:
                 title = e.title
             except Exception as ex:
                 title = ""
-                        
+
             try:
                 p.link = e.link
             except Exception as ex:
-                p.link = ''
+                p.link = ""
             p.title = title
 
             try:
@@ -496,20 +513,19 @@ def parse_feed_xml(source_feed, feed_content, output):
             except:
                 pass
 
-
             try:
-                p.created  = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=timezone.utc)
+                p.created = datetime.datetime.fromtimestamp(
+                    time.mktime(e.published_parsed)
+                ).replace(tzinfo=timezone.utc)
 
             except Exception as ex:
-                output.write("CREATED ERROR")     
-                p.created  = timezone.now()
-        
+                output.write("CREATED ERROR")
+
             p.guid = guid
             try:
                 p.author = e.author
             except Exception as ex:
                 p.author = ""
-
 
             try:
                 p.save()
@@ -518,17 +534,16 @@ def parse_feed_xml(source_feed, feed_content, output):
                 # import pdb; pdb.set_trace()
                 output.write(str(ex))
 
-
             try:
                 seen_files = []
                 for ee in list(p.enclosures.all()):
                     # check existing enclosure is still there
                     found_enclosure = False
                     for pe in e["enclosures"]:
-                    
+
                         if pe["href"] == ee.href and ee.href not in seen_files:
                             found_enclosure = True
-                        
+
                             try:
                                 ee.length = int(pe["length"])
                             except:
@@ -545,22 +560,24 @@ def parse_feed_xml(source_feed, feed_content, output):
                     if not found_enclosure:
                         ee.delete()
                     seen_files.append(ee.href)
-    
+
                 for pe in e["enclosures"]:
                     try:
                         if pe["href"] not in seen_files:
-                    
+
                             try:
                                 length = int(pe["length"])
                             except:
                                 length = 0
-                            
+
                             try:
                                 type = pe["type"]
                             except:
                                 type = "audio/mpeg"
-                    
-                            ee = Enclosure(post=p , href=pe["href"], length=length, type=type)
+
+                            ee = Enclosure(
+                                post=p, href=pe["href"], length=length, type=type
+                            )
                             ee.save()
                     except Exception as ex:
                         pass
@@ -568,30 +585,29 @@ def parse_feed_xml(source_feed, feed_content, output):
                 if output:
                     output.write("No enclosures - " + str(ex))
 
-
-
             try:
-                p.body = body                          
+                p.body = body
                 p.save()
                 # output.write(p.body)
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
 
-    return (ok,changed)
-    
-    
-    
+    return (ok, changed)
+
+
 def parse_feed_json(source_feed, feed_content, output):
 
     ok = True
-    changed = False 
+    changed = False
 
     try:
         f = json.loads(feed_content)
-        entries = f['items']
+        entries = f["items"]
         if len(entries):
-            source_feed.last_success = timezone.now() #in case we start auto unsubscribing long dead feeds
+            source_feed.last_success = (
+                timezone.now()
+            )  # in case we start auto unsubscribing long dead feeds
         else:
             source_feed.last_result = "Feed is empty"
             source_feed.interval += 120
@@ -602,15 +618,14 @@ def parse_feed_json(source_feed, feed_content, output):
         entries = []
         source_feed.interval += 120
         ok = False
-    
+
     if ok:
-    
-    
+
         if "expired" in f and f["expired"]:
             # This feed says it is done
             # TODO: permanently disable
             # for now source_feed.interval to max
-            source_feed.interval = (24*3*60)
+            source_feed.interval = 24 * 3 * 60
             source_feed.last_result = "This feed has expired"
             return (False, False, source_feed.interval)
 
@@ -620,30 +635,31 @@ def parse_feed_json(source_feed, feed_content, output):
         except Exception as ex:
             pass
 
-
         if "description" in f:
             _customize_sanitizer(parser)
-            source_feed.description = parser._sanitizeHTML(f["description"], "utf-8", 'text/html')
-            
+            source_feed.description = parser._sanitizeHTML(
+                f["description"], "utf-8", "text/html"
+            )
+
         _customize_sanitizer(parser)
-        source_feed.name = update_source_name(source_feed.name, parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html'))
+        source_feed.name = update_source_name(
+            source_feed.name,
+            parser._sanitizeHTML(source_feed.name, "utf-8", "text/html"),
+        )
 
         if "icon" in f:
             source_feed.image_url = f["icon"]
 
-
-        #output.write(entries)
-        entries.reverse() # Entries are typically in reverse chronological order - put them in right order
+        # output.write(entries)
+        entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
         for e in entries:
             body = " "
             if "content_text" in e:
                 body = e["content_text"]
             if "content_html" in e:
-                body = e["content_html"] # prefer html over text
-                
-            body = fix_relative(body,source_feed.site_url)
-            
-            
+                body = e["content_html"]  # prefer html over text
+
+            body = fix_relative(body, source_feed.site_url)
 
             try:
                 guid = e["id"]
@@ -654,59 +670,60 @@ def parse_feed_json(source_feed, feed_content, output):
                     m = hashlib.md5()
                     m.update(body.encode("utf-8"))
                     guid = m.hexdigest()
-                    
+
             try:
-                p  = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
+                p = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
                 output.write("EXISTING " + guid + "\n")
 
             except Exception as ex:
                 output.write("NEW " + guid + "\n")
-                p = Post(index=0, body=' ')
+                p = Post(index=0, body=" ")
                 p.found = timezone.now()
                 changed = True
                 p.source = source_feed
-    
+
             try:
                 title = e["title"]
             except Exception as ex:
-                title = ""      
-                
+                title = ""
+
             # borrow the RSS parser's sanitizer
             _customize_sanitizer(parser)
-            body  = parser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
+            body = parser._sanitizeHTML(
+                body, "utf-8", "text/html"
+            )  # TODO: validate charset ??
             _customize_sanitizer(parser)
-            title = parser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
+            title = parser._sanitizeHTML(
+                title, "utf-8", "text/html"
+            )  # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates
 
             if "banner_image" in e:
-                p.image_url = e["banner_image"]                
+                p.image_url = e["banner_image"]
 
             if "image" in e:
-                p.image_url = e["image"]                
+                p.image_url = e["image"]
 
-                        
             try:
                 p.link = e["url"]
             except Exception as ex:
-                p.link = ''
-            
+                p.link = ""
+
             p.title = title
 
             try:
-                p.created  = pyrfc3339.parse(e["date_published"])
+                p.created = pyrfc3339.parse(e["date_published"])
             except Exception as ex:
-                output.write("CREATED ERROR")     
-                p.created  = timezone.now()
-        
-        
+                output.write("CREATED ERROR")
+                p.created = timezone.now()
+
             p.guid = guid
             try:
                 p.author = e["author"]
             except Exception as ex:
                 p.author = ""
-                
+
             p.save()
-            
 
             try:
                 seen_files = []
@@ -715,10 +732,10 @@ def parse_feed_json(source_feed, feed_content, output):
                     found_enclosure = False
                     if "attachments" in e:
                         for pe in e["attachments"]:
-                    
+
                             if pe["url"] == ee.href and ee.href not in seen_files:
                                 found_enclosure = True
-                        
+
                                 try:
                                     ee.length = int(pe["size_in_bytes"])
                                 except:
@@ -741,18 +758,20 @@ def parse_feed_json(source_feed, feed_content, output):
 
                         try:
                             if pe["url"] not in seen_files:
-                    
+
                                 try:
                                     length = int(pe["size_in_bytes"])
                                 except:
                                     length = 0
-                            
+
                                 try:
                                     type = pe["mime_type"]
                                 except:
                                     type = "audio/mpeg"
-                    
-                                ee = Enclosure(post=p , href=pe["url"], length=length, type=type)
+
+                                ee = Enclosure(
+                                    post=p, href=pe["url"], length=length, type=type
+                                )
                                 ee.save()
                         except Exception as ex:
                             pass
@@ -761,20 +780,21 @@ def parse_feed_json(source_feed, feed_content, output):
                     output.write("No enclosures - " + str(ex))
 
             try:
-                p.body = body                       
+                p.body = body
                 p.save()
                 # output.write(p.body)
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
 
-    return (ok,changed)
-    
-    
+    return (ok, changed)
+
+
 def test_feed(source, cache=False, output=NullOutput()):
 
-
-    headers = { "User-Agent": get_agent(source)  } #identify ourselves and also stop our requests getting picked up by any cache
+    headers = {
+        "User-Agent": get_agent(source)
+    }  # identify ourselves and also stop our requests getting picked up by any cache
 
     if cache:
         if source.etag:
@@ -782,75 +802,81 @@ def test_feed(source, cache=False, output=NullOutput()):
         if source.last_modified:
             headers["If-Modified-Since"] = str(source.last_modified)
     else:
-        headers["Cache-Control"] = "no-cache,max-age=0" 
+        headers["Cache-Control"] = "no-cache,max-age=0"
         headers["Pragma"] = "no-cache"
 
     output.write("\n" + str(headers))
 
-    ret = requests.get(source.feed_url, headers=headers, allow_redirects=False, verify=False, timeout=20)
+    ret = requests.get(
+        source.feed_url,
+        headers=headers,
+        allow_redirects=False,
+        verify=False,
+        timeout=20,
+    )
 
     output.write("\n\n")
-    
+
     output.write(str(ret))
-    
+
     output.write("\n\n")
-    
+
     output.write(ret.text)
-    
-    
+
+
 def get_proxy(out=NullOutput()):
 
     p = WebProxy.objects.first()
-    
+
     if p is None:
         find_proxies(out)
         p = WebProxy.objects.first()
-    
+
     out.write("Proxy: {}".format(str(p)))
-    
-    return p 
-    
-    
+
+    return p
+
 
 def find_proxies(out=NullOutput()):
-    
-    
+
     out.write("\nLooking for proxies\n")
-    
+
     try:
-        req = requests.get("https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list.txt", timeout=30)
+        req = requests.get(
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list.txt",
+            timeout=30,
+        )
         if req.status_code == 200:
             list = req.text
-            
+
             list = list.split("\n")
-            
+
             # remove header
             list = list[4:]
-            
+
             for item in list:
                 if ":" in item:
                     item = item.split(" ")[0]
                     WebProxy(address=item).save()
 
-
-                        
     except Exception as ex:
         logging.error("Proxy scrape error: {}".format(str(ex)))
         out.write("Proxy scrape error: {}\n".format(str(ex)))
-            
+
     if WebProxy.objects.count() == 0:
         # something went wrong.
         # to stop infinite loops we will insert duff proxys now
         for i in range(20):
             WebProxy(address="X").save()
         out.write("No proxies found.\n")
-    
+
+
 def update_source_name(current_name, new_name):
     """
     Only autoupdate the source name when retrieving feeds if it is currently
     empty or the parameter allows it (default: true)
     """
-    
+
     # Never attempt to update if the new name is empty
     if not new_name:
         return current_name
