@@ -180,7 +180,7 @@ def read_feed(source_feed, output=NullOutput()):
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
     except Exception as ex:
-        logging.error("Fetch feed error: {ex}", ex=ex)
+        logging.error("Fetch feed error: {}".format(ex))
         source_feed.last_result = ("Fetch error:" + str(ex))[:255]
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
