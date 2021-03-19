@@ -8,6 +8,10 @@ from feeds import models
 class SourceAdmin(admin.ModelAdmin):
 
     readonly_fields = ("posts_link",)
+    list_display = (
+        "name",
+        "posts_link",
+    )
 
     def posts_link(self, obj=None):
         if obj.id is None:
