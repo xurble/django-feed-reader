@@ -159,7 +159,7 @@ def read_feed(source_feed, output=NullOutput()):
     
     ret = None
     try:
-        ret = requests.get(source_feed.feed_url, headers=headers, allow_redirects=False, timeout=20, proxies=proxies)
+        ret = requests.get(source_feed.feed_url, headers=headers, verify=False, allow_redirects=False, timeout=20, proxies=proxies)
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
@@ -249,7 +249,7 @@ def read_feed(source_feed, output=NullOutput()):
                 source_feed.last_result = "Feed has moved but no location provided"
         except exception as Ex:
             output.write("\nError redirecting.")
-            source_feed.last_result = "Error redirecting feed to " + new_url  
+            source_feed.last_result = ("Error redirecting feed to " + new_url)[:255] 
             pass
     elif ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307: #Temporary redirect
         new_url = ""
@@ -267,9 +267,9 @@ def read_feed(source_feed, output=NullOutput()):
                 new_url = start + end + new_url
                 
             
-            ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20)
+            ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20, verify=False)
             source_feed.status_code = ret.status_code
-            source_feed.last_result = "Temporary Redirect to " + new_url
+            source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
 
             if source_feed.last_302_url == new_url:
                 #this is where we 302'd to last time
@@ -278,19 +278,19 @@ def read_feed(source_feed, output=NullOutput()):
                     source_feed.feed_url = new_url
                     source_feed.last_302_url = " "
                     source_feed.last_302_start = None
-                    source_feed.last_result = "Permanent Redirect to " + new_url 
+                    source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
                 else:
-                    source_feed.last_result = "Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B")
+                    source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
 
             else:
                 source_feed.last_302_url = new_url
                 source_feed.last_302_start = timezone.now()
 
-                source_feed.last_result = "Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B")
+                source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
 
 
         except Exception as ex:     
-            source_feed.last_result = "Failed Redirection to " + new_url +  " " + str(ex)
+            source_feed.last_result = ("Failed Redirection to " + new_url +  " " + str(ex))["255"]
             source_feed.interval += 60
     
     #NOT ELIF, WE HAVE TO START THE IF AGAIN TO COPE WTIH 302
@@ -329,7 +329,7 @@ def read_feed(source_feed, output=NullOutput()):
             source_feed.last_change = timezone.now()
             
         elif ok:
-            source_feed.last_result = "OK"
+            source_feed.last_result = " OK"
             source_feed.interval += 20 # we slow down feeds a little more that don't send headers we can use
         else: #not OK
             source_feed.interval += 120
@@ -369,7 +369,7 @@ def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
         for p in posts:
             idx += 1
             p.index = idx
-            p.save()
+            p.save(update_fields=["index"])
             
         source_feed.max_index = idx
     
@@ -398,21 +398,26 @@ def parse_feed_xml(source_feed, feed_content, output):
         source_feed.last_result = "Feed Parse Error"
         entries = []
         ok = False
+        
+    source_feed.save()
     
     if ok:
         try:
             source_feed.name = f.feed.title
+            source_feed.save(update_fields=["name"])
         except Exception as ex:
             pass
 
         try:
             source_feed.site_url = f.feed.link
+            source_feed.save(update_fields=["site_url"])
         except Exception as ex:
             pass
     
 
         try:
             source_feed.image_url = f.feed.image.href
+            source_feed.save(update_fields=["image_url"])
         except:
             pass
 
@@ -429,6 +434,10 @@ def parse_feed_xml(source_feed, feed_content, output):
         except:
             pass
 
+        try:
+            source_feed.save(update_fields=["description"])
+        except:
+            pass
 
 
         #output.write(entries)
@@ -475,50 +484,59 @@ def parse_feed_xml(source_feed, feed_content, output):
 
             except Exception as ex:
                 output.write("NEW " + guid + "\n")
-                p = Post(index=0, body=" ")
+                p = Post(index=0, body=" ", title="", guid=guid)
                 p.found = timezone.now()
                 changed = True
+
+
+                try:
+                    p.created  = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=timezone.utc)
+
+                except Exception as ex2:
+                    output.write("CREATED ERROR")     
+                    p.created  = timezone.now()
+
+
                 p.source = source_feed
+                p.save()
     
             try:
-                title = e.title
+                p.title = e.title
+                p.save(update_fields=["title"])
             except Exception as ex:
-                title = ""
-                        
+                output.write("Title error:" + str(ex))
+                            
             try:
                 p.link = e.link
+                p.save(update_fields=["link"])
             except Exception as ex:
-                p.link = ''
-            p.title = title
+                output.write("Link error:" + str(ex))
 
             try:
                 p.image_url = e.image.href
+                p.save(update_fields=["image_url"])
             except:
                 pass
 
 
-            try:
-                p.created  = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=timezone.utc)
-
-            except Exception as ex:
-                output.write("CREATED ERROR")     
-                p.created  = timezone.now()
         
-            p.guid = guid
             try:
                 p.author = e.author
+                p.save(update_fields=["author"])
             except Exception as ex:
                 p.author = ""
 
 
+
             try:
-                p.save()
+                p.body = body                          
+                p.save(update_fields=["body"])
                 # output.write(p.body)
             except Exception as ex:
-                # import pdb; pdb.set_trace()
                 output.write(str(ex))
+                output.write(p.body)                
 
-
+            
             try:
                 seen_files = []
                 for ee in list(p.enclosures.all()):
@@ -570,13 +588,6 @@ def parse_feed_xml(source_feed, feed_content, output):
 
 
 
-            try:
-                p.body = body                          
-                p.save()
-                # output.write(p.body)
-            except Exception as ex:
-                output.write(str(ex))
-                output.write(p.body)
 
     return (ok,changed)
     
@@ -672,6 +683,7 @@ def parse_feed_json(source_feed, feed_content, output):
                 title = ""      
                 
             # borrow the RSS parser's sanitizer
+            
             _customize_sanitizer(parser)
             body  = parser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
             _customize_sanitizer(parser)
@@ -844,5 +856,4 @@ def find_proxies(out=NullOutput()):
         for i in range(20):
             WebProxy(address="X").save()
         out.write("No proxies found.\n")
-    
     
