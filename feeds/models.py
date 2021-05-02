@@ -13,12 +13,12 @@ class Source(models.Model):
     # This is an actual feed that we poll
     name          = models.CharField(max_length=255, blank=True, null=True)
     site_url      = models.CharField(max_length=255, blank=True, null=True)
-    feed_url      = models.CharField(max_length=255)
-    image_url     = models.CharField(max_length=255, blank=True, null=True)
+    feed_url      = models.CharField(max_length=512)
+    image_url     = models.CharField(max_length=512, blank=True, null=True)
     
     description   = models.TextField(null=True, blank=True)
 
-    last_polled   = models.DateTimeField(max_length=255, blank=True, null=True)
+    last_polled   = models.DateTimeField(blank=True, null=True)
     due_poll      = models.DateTimeField(default=datetime.datetime(1900, 1, 1)) # default to distant past to put new sources to front of queue
     etag          = models.CharField(max_length=255, blank=True, null=True)
     last_modified = models.CharField(max_length=255, blank=True, null=True) # just pass this back and forward between server and me , no need to parse
@@ -29,7 +29,7 @@ class Source(models.Model):
     last_change    = models.DateTimeField(null=True)
     live           = models.BooleanField(default=True)
     status_code    = models.PositiveIntegerField(default=0)
-    last_302_url   = models.CharField(max_length=255, null=True, blank=True)
+    last_302_url   = models.CharField(max_length=512, null=True, blank=True)
     last_302_start = models.DateTimeField(null=True, blank=True)
     
     max_index     = models.IntegerField(default=0)
@@ -117,7 +117,7 @@ class Post(models.Model):
     guid          = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     author        = models.CharField(max_length=255, blank=True, null=True)
     index         = models.IntegerField(db_index=True)
-    image_url     = models.CharField(max_length=255,blank=True,null=True)
+    image_url     = models.CharField(max_length=512, blank=True,null=True)
 
 
     @property
