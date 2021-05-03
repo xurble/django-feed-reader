@@ -1,13 +1,13 @@
 import setuptools
 
 
-with open('README.md', encoding='utf-8') as f:
+with open('readme.md', encoding='utf-8') as f:
     long_description = f.read()
 
 
 setuptools.setup(
     name='django-feed-reader',
-    version='0.2.4',
+    version='0.2.5',
     description='An RSS feed reading library for Django.',
     long_description=long_description,
     long_description_content_type='text/markdown',

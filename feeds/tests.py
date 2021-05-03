@@ -3,7 +3,7 @@ from django.conf import settings
 
 # Create your tests here.
 from feeds.models import Source, Post, Enclosure, WebProxy
-from feeds.utils import read_feed, find_proxies, get_proxy
+from feeds.utils import read_feed, find_proxies, get_proxy, fix_relative
 
 from django.utils import timezone
 from django.urls import reverse
@@ -18,6 +18,20 @@ import requests_mock
 
 TEST_FILES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)),"testdata")
 BASE_URL = 'http://feed.com/'
+
+class UtilsTest(TestCase):
+
+
+    def test_fix_relative(self):
+    
+        url = "https://example.com/rss.xml"
+        html= "<a href='/'><img src='/image.jpg'></a>"
+    
+        html = fix_relative(html, url)
+        
+        self.assertEqual(html, "<a href='https://example.com/'><img src='https://example.com/image.jpg'></a>")
+        
+
 
 class BaseTest(TestCase):
 

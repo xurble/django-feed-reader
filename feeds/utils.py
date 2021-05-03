@@ -90,6 +90,16 @@ def fix_relative(html, url):
 
         html = html.replace("src='/", "src='%s/" % base)
         html = html.replace('src="/', 'src="%s/' % base)
+
+
+        html = html.replace("href='//", "href='http://")
+        html = html.replace('href="//', 'href="http://')
+
+
+        html = html.replace("href='/", "href='%s/" % base)
+        html = html.replace('href="/', 'href="%s/' % base)
+
+
     
     except Exception as ex:
         pass    
@@ -143,8 +153,8 @@ def read_feed(source_feed, output=NullOutput()):
             if proxy.address != "X":
             
                 proxies = {
-                  'http': "http://" + proxy.address,
-                  'https': "https://" + proxy.address,
+                  'http': proxy.address,
+                  'https': proxy.address,
                 }
         except:
             pass    
@@ -342,7 +352,7 @@ def read_feed(source_feed, output=NullOutput()):
     output.write("\nUpdating source_feed.interval from %d to %d\n" % (old_interval, source_feed.interval))
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
-    source_feed.save()
+    source_feed.save(update_fields=["due_poll", "interval", "last_result", "last_modified", "etag", "last_302_start", "last_302_url", "last_success", "live", "status_code", "max_index"])
         
 
 def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
@@ -399,7 +409,7 @@ def parse_feed_xml(source_feed, feed_content, output):
         entries = []
         ok = False
         
-    source_feed.save()
+    source_feed.save(update_fields=["last_success", "last_result"])
     
     if ok:
         try:
