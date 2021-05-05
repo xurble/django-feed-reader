@@ -1,6 +1,6 @@
 
 
-### 0.3.0
+### 0.3.1
 - Alternative method of busting cloudflare - using cloudflare workers!
 
 ### 0.2.0
