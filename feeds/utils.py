@@ -1,5 +1,6 @@
 from django.db.models import Q
 from django.utils import timezone
+from django.conf import settings
 
 from feeds.models import Source, Enclosure, Post, WebProxy
 
@@ -15,7 +16,7 @@ import requests
 import pyrfc3339
 import json
 
-from django.conf import settings
+
 
 import hashlib
 from random import choice
@@ -144,20 +145,29 @@ def read_feed(source_feed, output=NullOutput()):
     headers = { "User-Agent": agent } #identify ourselves 
 
 
+    
+
     proxies = {}
     proxy = None
+    
+    feed_url = source_feed.feed_url
     if source_feed.is_cloudflare : # Fuck you !
-        try:
-            proxy = get_proxy(output)
+    
+
+        if settings.FEEDS_CLOUDFLARE_WORKER:
+            feed_url = "{}/read/?target={}".format(settings.FEEDS_CLOUDFLARE_WORKER, feed_url)
+        else:
+            try:
+                proxy = get_proxy(output)
             
-            if proxy.address != "X":
+                if proxy.address != "X":
             
-                proxies = {
-                  'http': proxy.address,
-                  'https': proxy.address,
-                }
-        except:
-            pass    
+                    proxies = {
+                      'http': proxy.address,
+                      'https': proxy.address,
+                    }
+            except:
+                pass    
 
 
     if source_feed.etag:
@@ -165,11 +175,11 @@ def read_feed(source_feed, output=NullOutput()):
     if source_feed.last_modified:
         headers["If-Modified-Since"] = str(source_feed.last_modified)
 
-    output.write("\nFetching %s" % source_feed.feed_url)
+    output.write("\nFetching %s" % feed_url)
     
     ret = None
     try:
-        ret = requests.get(source_feed.feed_url, headers=headers, verify=False, allow_redirects=False, timeout=20, proxies=proxies)
+        ret = requests.get(feed_url, headers=headers, verify=False, allow_redirects=False, timeout=20, proxies=proxies)
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
@@ -181,7 +191,7 @@ def read_feed(source_feed, output=NullOutput()):
 
 
         if proxy:
-            source_feed.lastResult = "Proxy failed. Next retry will use new proxy"
+            source_feed.last_result = "Proxy failed. Next retry will use new proxy"
             source_feed.status_code = 1  # this will stop us increasing the interval
 
             output.write("\nBurning the proxy.")
@@ -209,9 +219,9 @@ def read_feed(source_feed, output=NullOutput()):
             if source_feed.is_cloudflare and proxy is not None:
                 # we are already proxied - this proxy on cloudflare's shit list too?
                 proxy.delete()
-                output.write("\Proxy seemed to also be blocked, burning")
+                output.write("\nProxy seemed to also be blocked, burning")
                 source_feed.interval /= 2
-                source_feed.lastResult = "Proxy kind of worked but still got cloudflared."
+                source_feed.last_result = "Proxy kind of worked but still got cloudflared."
             else:            
                 source_feed.is_cloudflare = True
                 source_feed.last_result = "Blocked by Cloudflare (grr)"
