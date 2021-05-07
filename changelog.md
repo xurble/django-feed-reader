@@ -1,4 +1,6 @@
 
+### 0.3.2
+- bug fix release - `last_change` was not being saved
 
 ### 0.3.1
 - Alternative method of busting cloudflare - using cloudflare workers!

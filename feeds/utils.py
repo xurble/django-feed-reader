@@ -261,10 +261,12 @@ def read_feed(source_feed, output=NullOutput()):
                 
                     new_url = base + new_url
 
-
+                
                 source_feed.feed_url = new_url
-            
                 source_feed.last_result = "Moved"
+                source_feed.save(update_fields=["feed_url", "last_result"])
+
+
             else:
                 source_feed.last_result = "Feed has moved but no location provided"
         except exception as Ex:
@@ -299,6 +301,11 @@ def read_feed(source_feed, output=NullOutput()):
                     source_feed.last_302_url = " "
                     source_feed.last_302_start = None
                     source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
+
+                    source_feed.save(update_fields=["feed_url", "last_result", "last_302_url", "last_302_start"])
+
+
+
                 else:
                     source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
 
@@ -362,7 +369,13 @@ def read_feed(source_feed, output=NullOutput()):
     output.write("\nUpdating source_feed.interval from %d to %d\n" % (old_interval, source_feed.interval))
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
-    source_feed.save(update_fields=["due_poll", "interval", "last_result", "last_modified", "etag", "last_302_start", "last_302_url", "last_success", "live", "status_code", "max_index"])
+    source_feed.save(update_fields=[
+                "due_poll", "interval", "last_result", 
+                "last_modified", "etag", "last_302_start", 
+                "last_302_url", "last_success", "live", 
+                "status_code", "max_index", "is_cloudflare",
+                "last_change",
+            ])
         
 
 def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
@@ -426,6 +439,7 @@ def parse_feed_xml(source_feed, feed_content, output):
             source_feed.name = f.feed.title
             source_feed.save(update_fields=["name"])
         except Exception as ex:
+            output.write("\nUpdate name error:" + str(ex))
             pass
 
         try:
@@ -513,7 +527,7 @@ def parse_feed_xml(source_feed, feed_content, output):
                     p.created  = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=timezone.utc)
 
                 except Exception as ex2:
-                    output.write("CREATED ERROR")     
+                    output.write("CREATED ERROR:" + str(ex2))     
                     p.created  = timezone.now()
 
 
@@ -628,6 +642,9 @@ def parse_feed_json(source_feed, feed_content, output):
             source_feed.interval += 120
             ok = False
 
+        source_feed.save(update_fields=["last_success", "last_result"])
+
+
     except Exception as ex:
         source_feed.last_result = "Feed Parse Error"
         entries = []
@@ -648,20 +665,35 @@ def parse_feed_json(source_feed, feed_content, output):
         try:
             source_feed.site_url = f["home_page_url"]
             source_feed.name = f["title"]
+
+            source_feed.save(update_fields=["site_url", "title"])
+
         except Exception as ex:
             pass
 
 
-        if "description" in f:
+        try:
+            if "description" in f:
+                _customize_sanitizer(parser)
+                source_feed.description = parser._sanitizeHTML(f["description"], "utf-8", 'text/html')
+                source_feed.save(update_fields=["description"])
+        except Exception as ex:
+            pass
+                    
+        try:
             _customize_sanitizer(parser)
-            source_feed.description = parser._sanitizeHTML(f["description"], "utf-8", 'text/html')
-            
-        _customize_sanitizer(parser)
-        source_feed.name = parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
+            source_feed.name = parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
+            source_feed.save(update_fields=["name"])
 
-        if "icon" in f:
-            source_feed.image_url = f["icon"]
+        except Exception as ex:
+            pass
 
+        try:
+            if "icon" in f:
+                source_feed.image_url = f["icon"]
+                source_feed.save(update_fields=["icon"])
+        except Exception as ex:
+            pass
 
         #output.write(entries)
         entries.reverse() # Entries are typically in reverse chronological order - put them in right order
@@ -705,7 +737,7 @@ def parse_feed_json(source_feed, feed_content, output):
             # borrow the RSS parser's sanitizer
             
             _customize_sanitizer(parser)
-            body  = parser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
+            body = parser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
             _customize_sanitizer(parser)
             title = parser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates

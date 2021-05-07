@@ -67,15 +67,23 @@ class XMLFeedsTest(BaseTest):
         
         self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
 
-        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+
+
+        ls = timezone.now()
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.posts.count(), 1) # got the one post
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.etag, "an-etag")
+        self.assertNotEqual(src.last_success, ls)
+        self.assertNotEqual(src.last_change, ls)
 
 
     def test_podcast(self, mock):
@@ -86,7 +94,9 @@ class XMLFeedsTest(BaseTest):
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)        
+        read_feed(src)
+        src.refresh_from_db()
+        
         
         self.assertEqual(src.description, 'SU: Three nerds discussing tech, Apple, programming, and loosely related matters.') 
 
@@ -106,7 +116,9 @@ class XMLFeedsTest(BaseTest):
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         p = src.posts.all()[0]
         
@@ -125,7 +137,9 @@ class XMLFeedsTest(BaseTest):
         src.save()
         
         # read the feed to update the name
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.name, "safe")
         
@@ -138,7 +152,9 @@ class XMLFeedsTest(BaseTest):
         src.save()
         
         # read the feed to update the name
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
 
         body = src.posts.all()[0].body
@@ -157,15 +173,21 @@ class JSONFeedTest(BaseTest):
         
         self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
 
-        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        ls = timezone.now()
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.posts.count(), 2) # got the one post
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.etag, "an-etag")
+        self.assertNotEqual(src.last_success, ls)
+        self.assertNotEqual(src.last_change, ls)
         
 
     def test_sanitize_1(self, mock):
@@ -176,7 +198,9 @@ class JSONFeedTest(BaseTest):
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         p = src.posts.all()[0]
         
@@ -194,7 +218,9 @@ class JSONFeedTest(BaseTest):
         src.save()
         
         # read the feed to update the name
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.name, "safe")
         
@@ -207,7 +233,9 @@ class JSONFeedTest(BaseTest):
         src.save()
         
         # read the feed to update the name
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         
         post = src.posts.all()[0]
@@ -227,14 +255,18 @@ class HTTPStuffTest(BaseTest):
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 403)
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0, is_cloudflare=True)
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         
     def test_find_proxies(self, mock):
@@ -262,14 +294,18 @@ class HTTPStuffTest(BaseTest):
         src.save()
         
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.posts.count(), 1) # got the one post
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.etag, "an-etag")
 
         # Read the feed again to get a 304 and a small increment to the interval
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.posts.count(), 1) # should have no more
         self.assertEqual(src.status_code, 304)
         self.assertEqual(src.interval, 70)
@@ -283,7 +319,9 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)  # it returned a page, but not a  feed
         self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertEqual(src.interval, 120)
@@ -294,14 +332,22 @@ class HTTPStuffTest(BaseTest):
              
         self._populate_mock(mock, status=403, test_file="empty_file.txt", content_type="text/plain")
 
-        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        ls = timezone.now()
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls)
         src.save()
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+       
+        
+        
+        
+          
         self.assertEqual(src.status_code, 403)  # it returned a page, but not a  feed
         self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertFalse(src.live)
-        
+                
 
     def test_feed_gone(self, mock):
              
@@ -310,7 +356,9 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 410)  # it returned a page, but not a  feed
         self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertFalse(src.live)
@@ -322,7 +370,9 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 404)  # it returned a page, but not a  feed
         self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertTrue(src.live)
@@ -340,7 +390,9 @@ class HTTPStuffTest(BaseTest):
         self.assertIsNone(src.last_302_start)
         
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)  
         self.assertEqual(src.last_302_url, new_url)  # this is where  went
         self.assertIsNotNone(src.last_302_start)
@@ -349,7 +401,9 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
 
         # do it all again -  shouldn't change
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)  # it returned a page, but not a  feed
         self.assertEqual(src.last_302_url, new_url)  # this is where  went
         self.assertIsNotNone(src.last_302_start)
@@ -361,7 +415,9 @@ class HTTPStuffTest(BaseTest):
         # now we test making it permaent
         src.last_302_start = timezone.now() - timedelta(days=365)
         src.save()
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)  
         self.assertEqual(src.last_302_url, ' ')  
         self.assertIsNone(src.last_302_start)
@@ -380,12 +436,16 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 301)  
         self.assertEqual(src.interval, 60)  
         self.assertEqual(src.feed_url, new_url)
 
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 200)  
         self.assertEqual(src.posts.count(), 1) 
         self.assertEqual(src.interval, 60)
@@ -399,7 +459,9 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 500)  # error
         self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertTrue(src.live)       
@@ -413,7 +475,9 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
         
-        read_feed(src)         
+        read_feed(src)
+        src.refresh_from_db()
+         
         self.assertEqual(src.status_code, 503)  # error!
         self.assertEqual(src.posts.count(), 0) # can't have got any
         self.assertTrue(src.live)       
