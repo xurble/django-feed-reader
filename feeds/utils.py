@@ -317,7 +317,7 @@ def read_feed(source_feed, output=NullOutput()):
 
 
         except Exception as ex:     
-            source_feed.last_result = ("Failed Redirection to " + new_url +  " " + str(ex))["255"]
+            source_feed.last_result = ("Failed Redirection to " + new_url +  " " + str(ex))[:255]
             source_feed.interval += 60
     
     #NOT ELIF, WE HAVE TO START THE IF AGAIN TO COPE WTIH 302
