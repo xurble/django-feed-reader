@@ -1,4 +1,7 @@
 
+### 1.0.0
+- No real changes, but this is fine.  No more 0.x nonsense
+
 ### 0.3.2
 - bug fix release - `last_change` was not being saved
 
