@@ -25,8 +25,8 @@ class Source(models.Model):
     
     last_result    = models.CharField(max_length=255,blank=True,null=True)
     interval       = models.PositiveIntegerField(default=400)
-    last_success   = models.DateTimeField(null=True)
-    last_change    = models.DateTimeField(null=True)
+    last_success   = models.DateTimeField(blank=True, null=True)
+    last_change    = models.DateTimeField(blank=True, null=True)
     live           = models.BooleanField(default=True)
     status_code    = models.PositiveIntegerField(default=0)
     last_302_url   = models.CharField(max_length=512, null=True, blank=True)
