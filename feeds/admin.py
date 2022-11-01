@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.urls import reverse
 from django.utils.safestring import mark_safe
 
 # Register your models here.
@@ -14,7 +15,11 @@ class SourceAdmin(admin.ModelAdmin):
         if obj.id is None:
             return ''
         qs = obj.posts.all()
-        return mark_safe('<a href="/admin/feeds/post/?source__id=%i" target="_blank">%i Posts</a>' % (obj.id, qs.count()))
+        return mark_safe(
+            '<a href="%s?source__id=%i" target="_blank">%i Posts</a>' % (
+                reverse('admin:feeds_post_changelist'), obj.id, qs.count()
+            )
+        )
     posts_link.short_description = 'posts'
 
 class PostAdmin(admin.ModelAdmin):
@@ -33,7 +38,11 @@ class PostAdmin(admin.ModelAdmin):
         if obj.id is None:
             return ''
         qs = obj.enclosures.all()
-        return mark_safe('<a href="/admin/feeds/enclosure/?post__id=%i" target="_blank">%i Enclosures</a>' % (obj.id, qs.count()))
+        return mark_safe(
+            '<a href="%s?post__id=%i" target="_blank">%i Enclosures</a>' % (
+                reverse('admin:feeds_enclosure_changelist'), obj.id, qs.count()
+            )
+        )
     enclosures_link.short_description = 'enclosures'
 
 class EnclosureAdmin(admin.ModelAdmin):
