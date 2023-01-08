@@ -9,6 +9,20 @@ import sys
 import email
 
 
+import django.utils as django_utils
+from django.utils.deconstruct import deconstructible
+
+
+@deconstructible
+class ExpiresGenerator(object):
+    """Callable Key Generator that returns a random keystring.
+    """
+
+    def __call__(self):
+        return django_utils.timezone.now() - datetime.timedelta(days=1)
+
+
+
 class Source(models.Model):
     # This is an actual feed that we poll
     name          = models.CharField(max_length=255, blank=True, null=True)
@@ -62,7 +76,7 @@ class Source(models.Model):
         
         if not self.live:
             css = "background-color:#ccc;"
-        elif self.last_change == None or self.last_success == None:
+        elif self.last_change is None or self.last_success is None:
             css = "background-color:#D00;color:white"
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=utc) - self.last_change

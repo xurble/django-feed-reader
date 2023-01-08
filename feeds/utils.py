@@ -32,20 +32,18 @@ class NullOutput(object):
 
 def _customize_sanitizer(fp):
 
-
     bad_attributes = [
         "align",
         "valign",
         "hspace",
-        "class",
         "width",
         "height"
     ]
     
     for item in bad_attributes:
         try:
-            if item in fp._HTMLSanitizer.acceptable_attributes:
-                fp._HTMLSanitizer.acceptable_attributes.remove(item)
+            if item in fp.sanitizer._HTMLSanitizer.acceptable_attributes:
+                fp.sanitizer._HTMLSanitizer.acceptable_attributes.remove(item)
         except Exception:
             logging.debug("Could not remove {}".format(item))
             
@@ -674,14 +672,14 @@ def parse_feed_json(source_feed, feed_content, output):
         try:
             if "description" in f:
                 _customize_sanitizer(parser)
-                source_feed.description = parser._sanitizeHTML(f["description"], "utf-8", 'text/html')
+                source_feed.description = parser.sanitizer._sanitize_html(f["description"], "utf-8", 'text/html')
                 source_feed.save(update_fields=["description"])
         except Exception as ex:
             pass
                     
         try:
             _customize_sanitizer(parser)
-            source_feed.name = parser._sanitizeHTML(source_feed.name, "utf-8", 'text/html')
+            source_feed.name = parser.sanitizer._sanitize_html(source_feed.name, "utf-8", 'text/html')
             source_feed.save(update_fields=["name"])
 
         except Exception as ex:
@@ -734,11 +732,10 @@ def parse_feed_json(source_feed, feed_content, output):
                 title = ""      
                 
             # borrow the RSS parser's sanitizer
-            
             _customize_sanitizer(parser)
-            body = parser._sanitizeHTML(body, "utf-8", 'text/html') # TODO: validate charset ??
+            body = parser.sanitizer._sanitize_html(body, "utf-8", 'text/html') # TODO: validate charset ??
             _customize_sanitizer(parser)
-            title = parser._sanitizeHTML(title, "utf-8", 'text/html') # TODO: validate charset ??
+            title = parser.sanitizer._sanitize_html(title, "utf-8", 'text/html') # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates
 
             if "banner_image" in e:
