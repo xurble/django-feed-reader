@@ -522,10 +522,12 @@ def parse_feed_xml(source_feed, feed_content, output):
 
                 try:
                     p.created  = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=timezone.utc)
-
                 except Exception as ex2:
-                    output.write("CREATED ERROR:" + str(ex2))     
-                    p.created  = timezone.now()
+                    try:
+                        p.created  = datetime.datetime.fromtimestamp(time.mktime(e.updated_parsed)).replace(tzinfo=timezone.utc)
+                    except Exception as ex3:
+                        output.write("CREATED ERROR:" + str(ex3))
+                        p.created  = timezone.now()
 
 
                 p.source = source_feed
