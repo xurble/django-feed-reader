@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:webfeeds="http://webfeeds.org/rss/1.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Gareth Simpson</title>
+    <description>Public posts from @xurble@toot.community</description>
+    <link>https://toot.community/@xurble</link>
+    <image>
+      <url>https://static.toot.community/accounts/avatars/109/364/289/845/798/033/original/7d3e2e4698ccf6e7.jpg</url>
+      <title>Gareth Simpson</title>
+      <link>https://toot.community/@xurble</link>
+    </image>
+    <lastBuildDate>Sat, 07 Jan 2023 15:08:27 +0000</lastBuildDate>
+    <webfeeds:icon>https://static.toot.community/accounts/avatars/109/364/289/845/798/033/original/7d3e2e4698ccf6e7.jpg</webfeeds:icon>
+    <generator>Mastodon v4.0.2</generator>
+    <item>
+      <guid isPermaLink="true">https://toot.community/@xurble/109630701089778134</guid>
+      <link>https://toot.community/@xurble/109630701089778134</link>
+      <pubDate>Wed, 04 Jan 2023 11:29:02 +0000</pubDate>
+      <description>&lt;p&gt;Success! Took the first day of actually letting myself feel hungry to hit the line but that’s milestone one achieved. Better late than never. A little rest and then on to the next milestone. &lt;/p&gt;&lt;p&gt; &lt;a href="https://toot.community/tags/dieting" class="mention hashtag" rel="tag"&gt;#&lt;span&gt;dieting&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <media:content url="https://static.toot.community/media_attachments/files/109/630/699/083/220/193/original/42b211f5e48a22b2.jpg" type="image/jpeg" fileSize="41155" medium="image">
+        <media:rating scheme="urn:simple">nonadult</media:rating>
+      </media:content>
+      <category>dieting</category>
+    </item>
+  </channel>
+</rss>

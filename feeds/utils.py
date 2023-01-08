@@ -572,16 +572,43 @@ def parse_feed_xml(source_feed, feed_content, output):
             
             try:
                 seen_files = []
+                
+                post_files = e["enclosures"]
+                non_dupes = []
+                
+                # find any files in media_content that aren't already declared as enclosures
+                for ee in e["media_content"]:
+                    found = False
+                    for ff in post_files:
+                        if ff["href"] == ee["url"]:
+                            found = True
+                            break
+                    if not found:
+                        non_dupes.append(ee)
+                        
+                post_files += non_dupes
+                
+                
                 for ee in list(p.enclosures.all()):
                     # check existing enclosure is still there
                     found_enclosure = False
-                    for pe in e["enclosures"]:
+                    for pe in post_files:
+                    
+                        href = "href"
+                        if href not in pe:
+                            import pdb; pdb.set_trace()
+                            href = "url"
+
+                        length = "length"
+                        if length not in pe:
+                            length = "filesize"
+                    
                     
                         if pe["href"] == ee.href and ee.href not in seen_files:
                             found_enclosure = True
                         
                             try:
-                                ee.length = int(pe["length"])
+                                ee.length = int(pe[length])
                             except:
                                 ee.length = 0
 
@@ -597,12 +624,21 @@ def parse_feed_xml(source_feed, feed_content, output):
                         ee.delete()
                     seen_files.append(ee.href)
     
-                for pe in e["enclosures"]:
+                for pe in post_files:
+
+                    href = "href"
+                    if href not in pe:
+                        href = "url"
+
+                    length = "length"
+                    if length not in pe:
+                        length = "filesize"
+
                     try:
-                        if pe["href"] not in seen_files:
+                        if pe[href] not in seen_files:
                     
                             try:
-                                length = int(pe["length"])
+                                length = int(pe[length])
                             except:
                                 length = 0
                             
@@ -611,7 +647,7 @@ def parse_feed_xml(source_feed, feed_content, output):
                             except:
                                 type = "audio/mpeg"
                     
-                            ee = Enclosure(post=p , href=pe["href"], length=length, type=type)
+                            ee = Enclosure(post=p, href=pe[href], length=length, type=type)
                             ee.save()
                     except Exception as ex:
                         pass

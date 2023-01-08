@@ -102,6 +102,27 @@ class XMLFeedsTest(BaseTest):
 
         self.assertEqual(src.posts.all()[0].enclosures.count(), 1)
 
+    def test_mastodon(self, mock):
+    
+        self._populate_mock(mock, status=200, test_file="mastodon.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+        
+        # Read the feed once to get the 1 post  and the etag
+
+        read_feed(src)
+        src.refresh_from_db()
+        
+        
+        self.assertEqual(src.description, 'Public posts from @xurble@toot.community') 
+
+
+        self.assertEqual(src.posts.all()[0].enclosures.count(), 1)
+        
+        
+
+
 
 
     def test_sanitize_1(self, mock):
