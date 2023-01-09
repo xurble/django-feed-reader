@@ -1,3 +1,5 @@
+### 1.0.2
+- Support media:content.  Various bug fixes.
 
 ### 1.0.0
 - No real changes, but this is fine.  No more 0.x nonsense
