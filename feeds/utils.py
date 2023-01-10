@@ -596,7 +596,6 @@ def parse_feed_xml(source_feed, feed_content, output):
                     
                         href = "href"
                         if href not in pe:
-                            import pdb; pdb.set_trace()
                             href = "url"
 
                         length = "length"
