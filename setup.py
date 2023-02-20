@@ -7,7 +7,7 @@ with open('readme.md', encoding='utf-8') as f:
 
 setuptools.setup(
     name='django-feed-reader',
-    version='1.0.3',
+    version='1.0.5',
     description='An RSS feed reading library for Django.',
     long_description=long_description,
     long_description_content_type='text/markdown',

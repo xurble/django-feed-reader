@@ -411,6 +411,11 @@ def parse_feed_xml(source_feed, feed_content, output):
 
     ok = True
     changed = False 
+    
+    if source_feed.posts.all().count() == 0:
+        is_first = True
+    else:
+        is_first = False
 
     #output.write(ret.content)           
     try:
@@ -656,7 +661,24 @@ def parse_feed_xml(source_feed, feed_content, output):
                     output.write("No enclosures - " + str(ex))
 
 
-
+    if is_first and source_feed.posts.all().count() > 0:
+        # If this is the first time we have parsed this 
+        # then see if it's paginated and go back through its history
+        agent = get_agent(source_feed)
+        headers = { "User-Agent": agent } #identify ourselves 
+        keep_going = True
+        while keep_going:
+            keep_going = False  # assume were stopping unless we find a next link     
+            if hasattr(f.feed, 'links'): 
+                for link in f.feed.links: 
+                    if 'rel' in link and link['rel'] == "next":
+                        ret = requests.get(link['href'], headers=headers, verify=False, allow_redirects=True, timeout=20)
+                        (pok, pchanged) = parse_feed_xml(source_feed, ret.content, output)
+                        # print(link['href'])
+                        # print((pok, pchanged))
+                        f = parser.parse(ret.content)  # rebase the loop on this feed version
+                        keep_going = True
+            
 
     return (ok,changed)
     
