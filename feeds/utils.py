@@ -577,16 +577,17 @@ def parse_feed_xml(source_feed, feed_content, output):
                 non_dupes = []
                 
                 # find any files in media_content that aren't already declared as enclosures
-                for ee in e["media_content"]:
-                    found = False
-                    for ff in post_files:
-                        if ff["href"] == ee["url"]:
-                            found = True
-                            break
-                    if not found:
-                        non_dupes.append(ee)
+                if "media_content" in e:
+                    for ee in e["media_content"]:
+                        found = False
+                        for ff in post_files:
+                            if ff["href"] == ee["url"]:
+                                found = True
+                                break
+                        if not found:
+                            non_dupes.append(ee)
                         
-                post_files += non_dupes
+                    post_files += non_dupes
                 
                 
                 for ee in list(p.enclosures.all()):
