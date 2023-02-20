@@ -1,3 +1,6 @@
+### 1.0.4
+- Support feed pagination.  The first time a feed is read the parser will try to use pagination, if available, to get all available content
+
 ### 1.0.3
 - Support media:content.  Various bug fixes.
 
