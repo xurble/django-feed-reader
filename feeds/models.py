@@ -166,7 +166,9 @@ class Enclosure(models.Model):
     post   = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='enclosures')
     length = models.IntegerField(default=0)
     href   = models.CharField(max_length=512)
-    type   = models.CharField(max_length=256) 
+    type   = models.CharField(max_length=256)
+    medium = models.CharField(max_length=25, null=True, blank=True)
+    description = models.CharField(max_length=512, null= True, blank=True)
     
     @property
     def recast_link(self):

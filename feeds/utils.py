@@ -623,6 +623,15 @@ def parse_feed_xml(source_feed, feed_content, output):
                                 type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
 
                             ee.type = type
+
+                            
+                            if "medium" in pe:
+                                ee.medium = pe["medium"]
+                            
+                            if "description" in pe:
+                                ee.description = pe["description"][:512]
+                                
+                            
                             ee.save()
                             break
                     if not found_enclosure:
@@ -653,6 +662,15 @@ def parse_feed_xml(source_feed, feed_content, output):
                                 type = "audio/mpeg"
                     
                             ee = Enclosure(post=p, href=pe[href], length=length, type=type)
+
+                            if "medium" in pe:
+                                ee.medium = pe["medium"]
+                            
+                            if "description" in pe:
+                                ee.description = pe["description"][:512]
+
+
+
                             ee.save()
                     except Exception as ex:
                         pass
