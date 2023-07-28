@@ -609,7 +609,7 @@ def parse_feed_xml(source_feed, feed_content, output):
                             length = "filesize"
                     
                     
-                        if pe["href"] == ee.href and ee.href not in seen_files:
+                        if pe[href] == ee.href and ee.href not in seen_files:
                             found_enclosure = True
                         
                             try:
