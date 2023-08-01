@@ -209,8 +209,10 @@ def read_feed(source_feed, output=NullOutput()):
         #not found
         source_feed.interval += 120
         source_feed.last_result = "The feed could not be found"
-    elif ret.status_code == 403 or ret.status_code == 410: #Forbidden or gone
-
+    elif ret.status_code == 410: # Gone
+        source_feed.last_result = "Feed has gone away and says it isn't coming back."
+        source_feed.live = False
+    elif ret.status_code == 403:  # Forbidden
         if "Cloudflare" in ret.text or ("Server" in ret.headers and "cloudflare" in ret.headers["Server"]):
 
             if source_feed.is_cloudflare and proxy is not None:
@@ -225,7 +227,6 @@ def read_feed(source_feed, output=NullOutput()):
         else:
             source_feed.last_result = "Feed is no longer accessible."
             source_feed.live = False
-            
 
     elif ret.status_code >= 400 and ret.status_code < 500:
         #treat as bad request
@@ -483,22 +484,17 @@ def parse_feed_xml(source_feed, feed_content, output):
 
             # we are going to take the longest
             body = ""
-            
-            if hasattr(e, "content"):
-                for c in e.content:
-                    if len(c.value) > len(body):
-                        body = c.value
-            
+                        
             if hasattr(e, "summary"):
                 if len(e.summary) > len(body):
                     body = e.summary
 
             if hasattr(e, "summary_detail"):
-                if len(e.summary_detail.value) > len(body):
+                if len(e.summary_detail.value) >= len(body):
                     body = e.summary_detail.value
 
             if hasattr(e, "description"):
-                if len(e.description) > len(body):
+                if len(e.description) >= len(body):
                     body = e.description
 
 
