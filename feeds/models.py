@@ -119,7 +119,7 @@ class Source(models.Model):
         
 
 class Post(models.Model):
-
+    GUID_MAX_LENGTH = 1024
     # an entry in a feed
     
     source        = models.ForeignKey(Source, on_delete=models.CASCADE, related_name='posts')
@@ -128,7 +128,7 @@ class Post(models.Model):
     link          = models.CharField(max_length=512, blank=True, null=True)
     found         = models.DateTimeField(auto_now_add=True)
     created       = models.DateTimeField(db_index=True)
-    guid          = models.CharField(max_length=512, blank=True, null=True, db_index=True)
+    guid          = models.CharField(max_length=GUID_MAX_LENGTH, blank=True, null=True, db_index=True)
     author        = models.CharField(max_length=255, blank=True, null=True)
     index         = models.IntegerField(db_index=True)
     image_url     = models.CharField(max_length=512, blank=True,null=True)

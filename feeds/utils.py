@@ -405,8 +405,22 @@ def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
         source_feed.max_index = idx
     
     return (ok, changed)
-    
 
+def make_guid(e_id, e_url, body):
+    if is_valid_post_guid(e_id):
+        return e_id
+    elif is_valid_post_guid(e_url):
+        return e_url
+    else:
+        return hash_body(body)
+
+def hash_body(body):
+    m = hashlib.md5()
+    m.update(body.encode("utf-8"))
+    return m.hexdigest()
+
+def is_valid_post_guid(x):
+    return (x is not None) and (len(x) <= Post.GUID_MAX_LENGTH)
     
 def parse_feed_xml(source_feed, feed_content, output):
 
@@ -497,18 +511,10 @@ def parse_feed_xml(source_feed, feed_content, output):
                 if len(e.description) >= len(body):
                     body = e.description
 
-
             body = fix_relative(body, source_feed.site_url)
-            
-            try:
-                guid = e.guid
-            except Exception as ex:
-                try:
-                    guid = e.link
-                except Exception as ex:
-                    m = hashlib.md5()
-                    m.update(body.encode("utf-8"))
-                    guid = m.hexdigest()
+            e_guid = getattr(e, 'guid', None)
+            e_link = getattr(e, 'link', None)
+            guid = make_guid(e_guid, e_link, body)
                     
             try:
                 p  = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
@@ -776,18 +782,9 @@ def parse_feed_json(source_feed, feed_content, output):
                 body = e["content_html"] # prefer html over text
                 
             body = fix_relative(body,source_feed.site_url)
-            
-            
-
-            try:
-                guid = e["id"]
-            except Exception as ex:
-                try:
-                    guid = e["url"]
-                except Exception as ex:
-                    m = hashlib.md5()
-                    m.update(body.encode("utf-8"))
-                    guid = m.hexdigest()
+            e_id = e.get("id", None)
+            e_url = e.get("url", None)
+            guid = make_guid(e_id, e_url, body)
                     
             try:
                 p  = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
