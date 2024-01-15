@@ -1,7 +1,11 @@
 
+### 1.0.8
+- Increases the size of GUIDs
+- Adds support for Django 5
+
 ### 1.0.7
 - Fixes a bug that could result in the wrong body being set on items with a <content:encoded> element
-- Separates the handling of 403 and 410 result codes 
+- Separates the handling of 403 and 410 result codes
 
 ### 1.0.6
 - Fixes a bug preventing existing enclosures being updated when re-reading a feed
