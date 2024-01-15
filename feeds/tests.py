@@ -180,8 +180,6 @@ class XMLFeedsTest(BaseTest):
 
         body = src.posts.all()[0].body
 
-        import pdb; pdb.set_trace()
-
         self.assertTrue("<img" in body)
         self.assertFalse("align=" in body)
         self.assertFalse("hspace=" in body)

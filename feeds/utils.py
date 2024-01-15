@@ -498,6 +498,10 @@ def parse_feed_xml(source_feed, feed_content, output):
 
             # we are going to take the longest
             body = ""
+            if hasattr(e, "content"):
+                for c in e.content:
+                    if len(c.value) > len(body):
+                        body = c.value
 
             if hasattr(e, "summary"):
                 if len(e.summary) > len(body):
