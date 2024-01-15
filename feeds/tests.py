@@ -1,16 +1,16 @@
-from django.test import TestCase, Client
+from django.test import TestCase, TransactionTestCase, Client
 from django.conf import settings
 
 # Create your tests here.
 from feeds.models import Source, Post, Enclosure, WebProxy
-from feeds.utils import read_feed, find_proxies, get_proxy, fix_relative
+from feeds.utils import read_feed, find_proxies, get_proxy, fix_relative, hash_body
 
 from django.utils import timezone
 from django.urls import reverse
 
 from datetime import timedelta
 
-import mock
+import unittest.mock
 
 import os
 
@@ -33,7 +33,7 @@ class UtilsTest(TestCase):
 
 
 
-class BaseTest(TestCase):
+class BaseTest(TransactionTestCase):
 
 
     def _populate_mock(self, mock, test_file, status, content_type, etag=None, headers=None, url=BASE_URL, is_cloudflare=False):
@@ -186,6 +186,31 @@ class XMLFeedsTest(BaseTest):
         self.assertFalse("align=" in body)
         self.assertFalse("hspace=" in body)
 
+    def create_source(self, mock, test_name, test_fn):
+        self._populate_mock(mock, status=200,
+                            test_file=test_fn,
+                            content_type="application/rss+xml")
+        src = Source(name=test_name, feed_url=BASE_URL, interval=0)
+        src.save()
+        # read the feed to update the name
+        read_feed(src)
+        src.refresh_from_db()
+        self.assertEqual(src.status_code, 200)
+        return src
+
+    def test_catch_long_guid_short_url(self, mock):
+        test_name = "long guid short url"
+        src = self.create_source(mock, test_name, "long_guid_tests.xml")
+        # post with long guid should have hash guid
+        p = src.posts.get(title=test_name)
+        self.assertEqual(p.guid, p.link)
+
+    def test_catch_long_guid_long_url(self, mock):
+        test_name = "long guid long url"
+        src = self.create_source(mock, test_name, "long_guid_tests.xml")
+        # post with long guid should have hash guid
+        p = src.posts.get(title=test_name)
+        self.assertEqual(p.guid, hash_body(p.body))
 
 
 @requests_mock.Mocker()
