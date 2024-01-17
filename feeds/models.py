@@ -118,7 +118,7 @@ class Source(models.Model):
 
 
 class Post(models.Model):
-    GUID_MAX_LENGTH = 1024
+    GUID_MAX_LENGTH = 768
     # an entry in a feed
 
     source        = models.ForeignKey(Source, on_delete=models.CASCADE, related_name='posts')

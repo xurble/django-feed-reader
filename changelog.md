@@ -1,4 +1,7 @@
 
+### 1.0.9
+- Decreases the size of GUID slightly, was not compatible with MySQL
+
 ### 1.0.8
 - Increases the size of GUIDs
 - Adds support for Django 5
