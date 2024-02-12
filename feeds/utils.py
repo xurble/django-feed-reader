@@ -1,8 +1,8 @@
-from django.db.models import Q
+from django.db.models import Q, F
 from django.utils import timezone
 from django.conf import settings
 
-from feeds.models import Source, Enclosure, Post, WebProxy
+from feeds.models import Source, Enclosure, Post, WebProxy, Subscription
 
 import feedparser as parser
 
@@ -944,10 +944,7 @@ def get_proxy(out=NullOutput()):
 
     return p
 
-
-
 def find_proxies(out=NullOutput()):
-
 
     out.write("\nLooking for proxies\n")
 
@@ -966,8 +963,6 @@ def find_proxies(out=NullOutput()):
                     item = item.split(" ")[0]
                     WebProxy(address=item).save()
 
-
-
     except Exception as ex:
         logging.error("Proxy scrape error: {}".format(str(ex)))
         out.write("Proxy scrape error: {}\n".format(str(ex)))
@@ -978,4 +973,58 @@ def find_proxies(out=NullOutput()):
         for i in range(20):
             WebProxy(address="X").save()
         out.write("No proxies found.\n")
+
+
+def get_subscription_list_for_user(user):
+
+    subs_list = list(Subscription.objects.filter(Q(user = user) & Q(parent=None)).order_by("name"))
+
+    return subs_list
+
+def get_unread_subscription_list_for_user(user):
+
+    to_read = list(Subscription.objects.filter(Q(user = user) & (Q(source=None) | Q(is_river = True) | Q(last_read__lt = F('source__max_index')))).order_by("-name"))
+
+    subs_list = []
+    groups = {}
+
+    for sub in to_read:
+        if sub.source is None:
+            # This is a group add it to the group list for later
+            groups[sub.id] = sub
+            sub._unread_count = 0
+        if sub.parent_id is None:
+            subs_list.append(sub)
+
+    for sub in to_read:
+        if sub.parent_id:
+            # This is inside a group, all we do is add its count to the group it is in (assuming its not a group)
+            if sub.parent_id in groups and sub.source_id is not None:
+                grp = groups[sub.parent_id]
+                grp._unread_count += sub.unread_count
+
+    while len(groups.keys()) > 0:
+        for key in list(groups.keys()):
+            folder = groups[key]
+            found = False
+            for kk in list(groups.keys()):
+                vv = groups[kk]
+                if vv.parent_id == folder.id:
+                    # then this folder has subfolders still inside the
+                    # dictionary
+                    found = True
+                    break
+            if not found:
+                # This folder does not have any children
+                if folder.parent_id is not None:
+                    parent = groups[folder.parent_id]
+                    parent._unread_count += folder._unread_count
+                groups.pop(folder.id)
+
+    return subs_list
+
+
+
+
+
 

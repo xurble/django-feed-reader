@@ -1,15 +1,16 @@
-from django.db import models
 
 import time
 import datetime
 from urllib.parse import urlencode
 import logging
 import sys
-import email
 
 
+from django.conf import settings
+from django.db import models
 import django.utils as django_utils
 from django.utils.deconstruct import deconstructible
+
 
 
 @deconstructible
@@ -46,7 +47,7 @@ class Source(models.Model):
     last_302_start = models.DateTimeField(null=True, blank=True)
 
     max_index     = models.IntegerField(default=0)
-
+    last_read     = models.IntegerField(default=0)
     num_subs      = models.IntegerField(default=1)
 
     is_cloudflare  = models.BooleanField(default=False)
@@ -55,9 +56,27 @@ class Source(models.Model):
     def __str__(self):
         return self.display_name
 
+    def mark_read(self):
+        """
+            In a single user system, marm this feed as read
+        """
+        self.last_read = self.max_index
+        self.save()
+
+
+    @property
+    def unread_count(self):
+        """
+            In a single user system how many unread articles are there?
+
+            If you need more than one user, or want to arrange feeds
+            into folders, use a Subscription (below)
+        """
+        return self.max_index - self.last_read
+
     @property
     def best_link(self):
-        #the html link else hte feed link
+        #the html link else the feed link
         if self.site_url is None or self.site_url == '':
             return self.feed_url
         else:
@@ -180,6 +199,60 @@ class Enclosure(models.Model):
         #    return self.href + ("?recast_id=%d" % self.id)
 
         return "/enclosure/%d/" % self.id
+
+    @property
+    def is_image(self):
+        if self.medium == "image":
+            return True
+        return "image/" in self.type and not self.medium
+
+    @property
+    def is_audio(self):
+        if self.medium == "audio":
+            return True
+        return "audio/" in self.type and not self.medium
+
+
+    @property
+    def is_video(self):
+        if self.medium == "video":
+            return True
+        return "video/" in self.type and not self.medium
+
+
+# A user subscription
+class Subscription(models.Model):
+    user      = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    source    = models.ForeignKey(Source,blank=True,null=True, on_delete=models.CASCADE, related_name='subscriptions') # null source means we are a folder
+    parent    = models.ForeignKey('self',blank=True,null=True, on_delete=models.CASCADE, related_name='subscriptions')
+    last_read = models.IntegerField(default=0)
+    is_river  = models.BooleanField(default=False)
+    name      = models.CharField(max_length=255)
+
+    def __str__(self):
+        return "'%s' for user %s" % (self.name, str(self.user))
+
+
+    def mark_read(self):
+        if self.source:
+            self.last_read = self.source.max_index
+            self.save()
+        else:
+            # I am a folder
+            for child in Subscription.objects.filter(parent=self):
+                child.mark_read()
+
+    @property
+    def unread_count(self):
+        if self.source:
+            return self.source.max_index - self.last_read
+        else:
+            if not hasattr(self, "_unread_count"):
+                self._unread_count = 0
+                for child in Subscription.objects.filter(parent=self):
+                    self._unread_count += child.unread_count
+
+            return self._unread_count
 
 
 class WebProxy(models.Model):

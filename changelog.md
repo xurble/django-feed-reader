@@ -1,4 +1,7 @@
 
+### 1.1.0-beta.1
+- Add ability to manage read status, put feeds in folders, have multiple users
+
 ### 1.0.9
 - Decreases the size of GUID slightly, was not compatible with MySQL
 
