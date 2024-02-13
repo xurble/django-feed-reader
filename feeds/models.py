@@ -1,16 +1,13 @@
 
-import time
 import datetime
 from urllib.parse import urlencode
 import logging
-import sys
 
 
 from django.conf import settings
 from django.db import models
 import django.utils as django_utils
 from django.utils.deconstruct import deconstructible
-
 
 
 @deconstructible
@@ -22,36 +19,34 @@ class ExpiresGenerator(object):
         return django_utils.timezone.now() - datetime.timedelta(days=1)
 
 
-
 class Source(models.Model):
     # This is an actual feed that we poll
-    name          = models.CharField(max_length=255, blank=True, null=True)
-    site_url      = models.CharField(max_length=255, blank=True, null=True)
-    feed_url      = models.CharField(max_length=512)
-    image_url     = models.CharField(max_length=512, blank=True, null=True)
+    name = models.CharField(max_length=255, blank=True, null=True)
+    site_url = models.CharField(max_length=255, blank=True, null=True)
+    feed_url = models.CharField(max_length=512)
+    image_url = models.CharField(max_length=512, blank=True, null=True)
 
-    description   = models.TextField(null=True, blank=True)
+    description = models.TextField(null=True, blank=True)
 
-    last_polled   = models.DateTimeField(blank=True, null=True)
-    due_poll      = models.DateTimeField(default=datetime.datetime(1900, 1, 1)) # default to distant past to put new sources to front of queue
-    etag          = models.CharField(max_length=255, blank=True, null=True)
-    last_modified = models.CharField(max_length=255, blank=True, null=True) # just pass this back and forward between server and me , no need to parse
+    last_polled = models.DateTimeField(blank=True, null=True)
+    due_poll = models.DateTimeField(default=datetime.datetime(1900, 1, 1))  # default to distant past to put new sources to front of queue
+    etag = models.CharField(max_length=255, blank=True, null=True)
+    last_modified = models.CharField(max_length=255, blank=True, null=True)  # just pass this back and forward between server and me , no need to parse
 
-    last_result    = models.CharField(max_length=255,blank=True,null=True)
-    interval       = models.PositiveIntegerField(default=400)
-    last_success   = models.DateTimeField(blank=True, null=True)
-    last_change    = models.DateTimeField(blank=True, null=True)
-    live           = models.BooleanField(default=True)
-    status_code    = models.PositiveIntegerField(default=0)
-    last_302_url   = models.CharField(max_length=512, null=True, blank=True)
+    last_result = models.CharField(max_length=255, blank=True, null=True)
+    interval = models.PositiveIntegerField(default=400)
+    last_success = models.DateTimeField(blank=True, null=True)
+    last_change = models.DateTimeField(blank=True, null=True)
+    live = models.BooleanField(default=True)
+    status_code = models.PositiveIntegerField(default=0)
+    last_302_url = models.CharField(max_length=512, null=True, blank=True)
     last_302_start = models.DateTimeField(null=True, blank=True)
 
-    max_index     = models.IntegerField(default=0)
-    last_read     = models.IntegerField(default=0)
-    num_subs      = models.IntegerField(default=1)
+    max_index = models.IntegerField(default=0)
+    last_read = models.IntegerField(default=0)
+    num_subs = models.IntegerField(default=1)
 
-    is_cloudflare  = models.BooleanField(default=False)
-
+    is_cloudflare = models.BooleanField(default=False)
 
     def __str__(self):
         return self.display_name
@@ -62,7 +57,6 @@ class Source(models.Model):
         """
         self.last_read = self.max_index
         self.save()
-
 
     @property
     def unread_count(self):
@@ -76,7 +70,7 @@ class Source(models.Model):
 
     @property
     def best_link(self):
-        #the html link else the feed link
+        # the html link else the feed link
         if self.site_url is None or self.site_url == '':
             return self.feed_url
         else:
@@ -99,12 +93,13 @@ class Source(models.Model):
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - self.last_change
 
-            days = int (dd.days / 2)
+            days = int(dd.days / 2)
 
             col = 255 - days
-            if col < 0: col = 0
+            if col < 0:
+                col = 0
 
-            css = "background-color:#ff%02x%02x" % (col,col)
+            css = "background-color:#ff%02x%02x" % (col, col)
 
             if col < 128:
                 css += ";color:white"
@@ -115,23 +110,23 @@ class Source(models.Model):
     def health_box(self):
 
         if not self.live:
-            css="#ccc;"
-        elif self.last_change == None or self.last_success == None:
-            css="#F00;"
+            css = "#ccc;"
+        elif self.last_change is None or self.last_success is None:
+            css = "#F00;"
         else:
             dd = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - self.last_change
 
-            days = int (dd.days/2)
+            days = int(dd.days/2)
 
             red = days
             if red > 255:
                 red = 255
 
-            green = 255-days;
+            green = 255 - days
             if green < 0:
                 green = 0
 
-            css = "#%02x%02x00" % (red,green)
+            css = "#%02x%02x00" % (red, green)
 
         return css
 
@@ -140,24 +135,24 @@ class Post(models.Model):
     GUID_MAX_LENGTH = 768
     # an entry in a feed
 
-    source        = models.ForeignKey(Source, on_delete=models.CASCADE, related_name='posts')
-    title         = models.TextField(blank=True)
-    body          = models.TextField()
-    link          = models.CharField(max_length=512, blank=True, null=True)
-    found         = models.DateTimeField(auto_now_add=True)
-    created       = models.DateTimeField(db_index=True)
-    guid          = models.CharField(max_length=GUID_MAX_LENGTH, blank=True, null=True, db_index=True)
-    author        = models.CharField(max_length=255, blank=True, null=True)
-    index         = models.IntegerField(db_index=True)
-    image_url     = models.CharField(max_length=512, blank=True,null=True)
-
+    source = models.ForeignKey(Source, on_delete=models.CASCADE, related_name='posts')
+    title = models.TextField(blank=True)
+    body = models.TextField()
+    link = models.CharField(max_length=512, blank=True, null=True)
+    found = models.DateTimeField(auto_now_add=True)
+    created = models.DateTimeField(db_index=True)
+    guid = models.CharField(max_length=GUID_MAX_LENGTH, blank=True, null=True, db_index=True)
+    author = models.CharField(max_length=255, blank=True, null=True)
+    index = models.IntegerField(db_index=True)
+    image_url = models.CharField(max_length=512, blank=True, null=True)
 
     @property
     def title_url_encoded(self):
         try:
-            ret = urlencode({"X":self.title})
-            if len(ret) > 2: ret = ret[2:]
-        except:
+            ret = urlencode({"X": self.title})
+            if len(ret) > 2:
+                ret = ret[2:]
+        except Exception:
             logging.info("Failed to url encode title of post {}".format(self.id))
             ret = ""
 
@@ -168,35 +163,25 @@ class Post(models.Model):
     def recast_link(self):
 
         # TODO: This needs to come out, it's just for recast
-
-        #if "?" in self.link:
-        #    return self.link + ("&recast_id=%d" % self.id)
-        #else:
-        #    return self.link + ("?recast_id=%d" % self.id)current_subscription
-
         return "/post/%d/" % self.id
 
     class Meta:
         ordering = ["index"]
 
+
 class Enclosure(models.Model):
 
-    post   = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='enclosures')
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='enclosures')
     length = models.IntegerField(default=0)
-    href   = models.CharField(max_length=512)
-    type   = models.CharField(max_length=256)
+    href = models.CharField(max_length=512)
+    type = models.CharField(max_length=256)
     medium = models.CharField(max_length=25, null=True, blank=True)
-    description = models.CharField(max_length=512, null= True, blank=True)
+    description = models.CharField(max_length=512, null=True, blank=True)
 
     @property
     def recast_link(self):
 
         # TODO: This needs to come out, it's just for recast
-
-        #if "?" in self.href:
-        #    return self.href + ("&recast_id=%d" % self.id)
-        #else:
-        #    return self.href + ("?recast_id=%d" % self.id)
 
         return "/enclosure/%d/" % self.id
 
@@ -212,7 +197,6 @@ class Enclosure(models.Model):
             return True
         return "audio/" in self.type and not self.medium
 
-
     @property
     def is_video(self):
         if self.medium == "video":
@@ -222,16 +206,15 @@ class Enclosure(models.Model):
 
 # A user subscription
 class Subscription(models.Model):
-    user      = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    source    = models.ForeignKey(Source,blank=True,null=True, on_delete=models.CASCADE, related_name='subscriptions') # null source means we are a folder
-    parent    = models.ForeignKey('self',blank=True,null=True, on_delete=models.CASCADE, related_name='subscriptions')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    source = models.ForeignKey(Source, blank=True, null=True, on_delete=models.CASCADE, related_name='subscriptions')  # null source means we are a folder
+    parent = models.ForeignKey('self', blank=True, null=True, on_delete=models.CASCADE, related_name='subscriptions')
     last_read = models.IntegerField(default=0)
-    is_river  = models.BooleanField(default=False)
-    name      = models.CharField(max_length=255)
+    is_river = models.BooleanField(default=False)
+    name = models.CharField(max_length=255)
 
     def __str__(self):
         return "'%s' for user %s" % (self.name, str(self.user))
-
 
     def mark_read(self):
         if self.source:
@@ -262,5 +245,3 @@ class WebProxy(models.Model):
 
     def __str__(self):
         return "Proxy:{}".format(self.address)
-
-
