@@ -2,9 +2,18 @@ from django.test import TestCase, TransactionTestCase, Client
 from django.conf import settings
 
 # Create your tests here.
-from feeds.models import Source, Post, Enclosure, WebProxy
-from feeds.utils import read_feed, find_proxies, get_proxy, fix_relative, hash_body
+from feeds.models import Source, Post, Enclosure, WebProxy, Subscription
+from feeds.utils import (
+    read_feed,
+    find_proxies,
+    get_proxy,
+    fix_relative,
+    hash_body,
+    get_subscription_list_for_user,
+    get_unread_subscription_list_for_user
+)
 
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.urls import reverse
 
@@ -15,6 +24,8 @@ import unittest.mock
 import os
 
 import requests_mock
+
+User = get_user_model()
 
 TEST_FILES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)),"testdata")
 BASE_URL = 'http://feed.com/'
@@ -30,8 +41,6 @@ class UtilsTest(TestCase):
         html = fix_relative(html, url)
 
         self.assertEqual(html, "<a href='https://example.com/'><img src='https://example.com/image.jpg'></a>")
-
-
 
 class BaseTest(TransactionTestCase):
 
@@ -60,6 +69,249 @@ class BaseTest(TransactionTestCase):
 
 
 @requests_mock.Mocker()
+class SubscriptionsTest(BaseTest):
+
+    def test_single_user(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+
+        ls = timezone.now()
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src.save()
+
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)
+        src.refresh_from_db()
+
+        self.assertEqual(src.unread_count, 1)
+
+        src.mark_read()
+
+        src.refresh_from_db()
+
+        self.assertEqual(src.unread_count, 0)
+
+    def test_basic_subscription(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+
+        ls = timezone.now()
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src.save()
+
+        user = User(email='x@example.com')
+        user.save()
+
+        read_feed(src)
+
+        sub = Subscription(user=user, source=src)
+        sub.save()
+        sub.refresh_from_db()
+
+        self.assertEqual(src.unread_count, 1)
+
+        sub.mark_read()
+
+        sub.refresh_from_db()
+
+        self.assertEqual(sub.unread_count, 0)
+
+
+    def test_get_subscription_list(self, mock):
+
+        user = User(email='x@example.com')
+        user.save()
+
+
+        for i in range(5):
+            ls = timezone.now()
+            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src)
+            sub.save()
+
+        sub_list = get_subscription_list_for_user(user)
+
+        self.assertEqual(len(sub_list), 5)
+
+
+    def test_get_subscription_list(self, mock):
+
+        user = User(email='x@example.com')
+        user.save()
+
+
+        for i in range(5):
+            ls = timezone.now()
+            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src)
+            sub.save()
+
+        folder = Subscription(user=user, source=None, name="Folder")
+        folder.save()
+
+        for i in range(5):
+            ls = timezone.now()
+            src = Source(name="folder_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src, parent=folder)
+            sub.save()
+
+
+        all_subs_and_folder = Subscription.objects.filter(user=user).count()
+
+        sub_list = get_subscription_list_for_user(user)
+
+        self.assertEqual(all_subs_and_folder, 11)
+        self.assertEqual(len(sub_list), 6)
+
+
+    def test_basic_subscription_unread_counts(self, mock):
+
+        user = User(email='x@example.com')
+        user.save()
+
+        for i in range(5):
+            ls = timezone.now()
+            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src)
+            sub.save()
+
+        folder = Subscription(user=user, source=None, name="Folder")
+        folder.save()
+
+        for i in range(5):
+            ls = timezone.now()
+            src = Source(name="folder_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src, parent=folder)
+            sub.save()
+
+
+        all_subs_and_folder = Subscription.objects.filter(user=user).count()
+
+        sub_list = get_unread_subscription_list_for_user(user)
+
+        self.assertEqual(all_subs_and_folder, 11)
+        self.assertEqual(len(sub_list), 6)
+
+        for s in sub_list:
+            if s.source is None:
+                self.assertEqual(s.unread_count, 5)
+
+
+    def test_nested_subscription_unread_counts(self, mock):
+
+        user = User(email='x@example.com')
+        user.save()
+
+        for i in range(3):
+            ls = timezone.now()
+            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src)
+            sub.save()
+
+        folder = Subscription(user=user, source=None, name="Folder")
+        folder.save()
+
+        for i in range(3):
+            ls = timezone.now()
+            src = Source(name="folder1_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src, parent=folder)
+            sub.save()
+
+        folder2 = Subscription(user=user, source=None, name="AFolder2", parent=folder)
+        folder2.save()
+
+        for i in range(3):
+            ls = timezone.now()
+            src = Source(name="folder2_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src, parent=folder2)
+            sub.save()
+
+
+        all_subs_and_folder = Subscription.objects.filter(user=user).count()
+
+        sub_list = get_unread_subscription_list_for_user(user)
+
+        self.assertEqual(all_subs_and_folder, 11)
+        self.assertEqual(len(sub_list), 4)
+
+        for s in sub_list:
+            if s.source is None:
+                self.assertEqual(s.unread_count, 6)
+
+
+    def test_get_unread_count_for_single_folder(self, mock):
+
+
+        user = User(email='x@example.com')
+        user.save()
+
+        for i in range(3):
+            ls = timezone.now()
+            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src)
+            sub.save()
+
+        folder = Subscription(user=user, source=None, name="Folder")
+        folder.save()
+
+        for i in range(3):
+            ls = timezone.now()
+            src = Source(name="folder1_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src, parent=folder)
+            sub.save()
+
+        folder2 = Subscription(user=user, source=None, name="AFolder2", parent=folder)
+        folder2.save()
+
+        for i in range(3):
+            ls = timezone.now()
+            src = Source(name="folder2_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src.max_index = 1
+            src.save()
+
+            sub = Subscription(user=user, source=src, parent=folder2)
+            sub.save()
+
+
+        folder.refresh_from_db()
+        all_subs_and_folder = Subscription.objects.filter(user=user).count()
+
+        self.assertEqual(all_subs_and_folder, 11)
+        self.assertEqual(folder.unread_count, 6)
+
+
+
+@requests_mock.Mocker()
 class XMLFeedsTest(BaseTest):
 
 
@@ -68,9 +320,7 @@ class XMLFeedsTest(BaseTest):
         self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
 
 
-
         ls = timezone.now()
-
         src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
         src.save()
 

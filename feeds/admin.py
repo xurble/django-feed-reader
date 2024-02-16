@@ -5,6 +5,7 @@ from django.utils.safestring import mark_safe
 # Register your models here.
 from feeds import models
 
+
 class SourceAdmin(admin.ModelAdmin):
 
     readonly_fields = (
@@ -21,6 +22,7 @@ class SourceAdmin(admin.ModelAdmin):
             )
         )
     posts_link.short_description = 'posts'
+
 
 class PostAdmin(admin.ModelAdmin):
 
@@ -45,13 +47,16 @@ class PostAdmin(admin.ModelAdmin):
         )
     enclosures_link.short_description = 'enclosures'
 
+
 class EnclosureAdmin(admin.ModelAdmin):
 
     raw_id_fields = ('post',)
 
     list_display = ('href', 'type')
 
+
 admin.site.register(models.Source, SourceAdmin)
 admin.site.register(models.Post, PostAdmin)
 admin.site.register(models.Enclosure, EnclosureAdmin)
 admin.site.register(models.WebProxy)
+admin.site.register(models.Subscription)
