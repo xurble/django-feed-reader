@@ -1,5 +1,5 @@
 
-### 1.1.0-beta.1
+### 1.1.0
 - Add ability to manage read status, put feeds in folders, have multiple users
 
 ### 1.0.9
