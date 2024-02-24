@@ -29,6 +29,10 @@ KEEP_OLD_ENCLOSURES = False
 if hasattr(settings, "FEEDS_KEEP_OLD_ENCLOSURES"):
     KEEP_OLD_ENCLOSURES = settings.FEEDS_KEEP_OLD_ENCLOSURES
 
+SAVE_JSON = False
+if hasattr(settings, "FEEDS_SAVE_JSON"):
+    SAVE_JSON = settings.FEEDS_SAVE_JSON
+
 
 class LogOutput(object):
 
@@ -485,6 +489,10 @@ def parse_feed_xml(source_feed, feed_content, output):
                 p.source = source_feed
                 p.save()
 
+            if SAVE_JSON:
+                p.json = e
+                p.save(update_fields=["json"])
+
             try:
                 p.title = e.title
                 p.save(update_fields=["title"])
@@ -625,6 +633,12 @@ def parse_feed_xml(source_feed, feed_content, output):
             except Exception as ex:
                 if output:
                     output.write("No enclosures - " + str(ex))
+
+        if SAVE_JSON:
+            # Kill the entries
+            f["entries"] = None
+            source_feed.json = f
+            source_feed.save(update_fields=["json"])
 
     if is_first and source_feed.posts.all().count() > 0:
         # If this is the first time we have parsed this

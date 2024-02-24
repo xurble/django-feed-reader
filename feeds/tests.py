@@ -414,7 +414,6 @@ class XMLFeedsTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        import pdb; pdb.set_trace()
         read_feed(src)
 
         self._populate_mock(mock, status=200, test_file="media_content_changed.xml", content_type="application/rss+xml")
@@ -431,6 +430,25 @@ class XMLFeedsTest(BaseTest):
         enc = post.current_enclosures.all()[0]
 
         self.assertEqual(enc.href, "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba_new.jpeg")
+
+    def test_save_json(self, mock):
+
+        settings.FEEDS_SAVE_JSON = True
+
+        # to pick up the settings change
+        reload(utils)
+
+        self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src)
+        src.refresh_from_db()
+        self.assertEqual(src.json["feed"]["link"], "https://toot.community/@xurble")
+
+        post = src.posts.all()[0]
+        self.assertEqual(post.json["summary"], post.body)
 
     def test_sanitize_1(self, mock):
 
