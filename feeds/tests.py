@@ -2,11 +2,9 @@ from django.test import TestCase, TransactionTestCase
 from django.conf import settings
 
 # Create your tests here.
-from feeds.models import Source, WebProxy, Subscription
+from feeds.models import Source, Subscription
 from feeds.utils import (
     read_feed,
-    find_proxies,
-    get_proxy,
     fix_relative,
     hash_body,
     get_subscription_list_for_user,
@@ -83,6 +81,41 @@ class SubscriptionsTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(src.unread_count, 0)
+
+    def test_subscriber_count(self, mock):
+
+        ls = timezone.now()
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src.save()
+        src.refresh_from_db()
+        # If we don't use Subscriptions then the default is 1
+        self.assertEqual(src.subscriber_count, 1)
+
+        # First subscriber keeps num_subs at 1
+        user = User(email='x@example.com')
+        user.save()
+        sub = Subscription(user=user, source=src)
+        sub.save()
+        src.refresh_from_db()
+        self.assertEqual(src.subscriber_count, 1)
+
+        # Second subscriber ups it to 2
+        user2 = User(email='y@example.com')
+        user2.save()
+        sub2 = Subscription(user=user2, source=src)
+        sub2.save()
+        src.refresh_from_db()
+        self.assertEqual(src.subscriber_count, 2)
+
+        # deleting Subscriptions drops the subscriber count
+        sub.delete()
+        src.refresh_from_db()
+        self.assertEqual(src.subscriber_count, 1)
+
+        # all the way down to none
+        sub2.delete()
+        src.refresh_from_db()
+        self.assertEqual(src.subscriber_count, 0)
 
     def test_basic_subscription(self, mock):
 
@@ -550,22 +583,6 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
-
-    def test_find_proxies(self, mock):
-
-        self._populate_mock(mock, status=200, test_file="proxy_list.html", content_type="text/html", url="http://www.workingproxies.org")
-
-        find_proxies()
-
-        self.assertEqual(WebProxy.objects.count(), 20)
-
-    def test_get_proxy(self, mock):
-
-        self._populate_mock(mock, status=200, test_file="proxy_list.html", content_type="text/html", url="http://www.workingproxies.org")
-
-        p = get_proxy()
-
-        self.assertIsNotNone(p)
 
     def test_etags(self, mock):
 

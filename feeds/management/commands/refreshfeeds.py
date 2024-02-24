@@ -8,6 +8,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
 
-        update_feeds(30, self.stdout)
+        update_feeds(30)
 
         self.stdout.write(self.style.SUCCESS('Finished'))
