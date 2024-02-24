@@ -21,6 +21,10 @@ import logging
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
+VERIFY_HTTPS = True
+if hasattr(settings, "FEEDS_VERIFY_HTTPS"):
+    VERIFY_HTTPS = settings.FEEDS_VERIFY_HTTPS
+
 
 class LogOutput(object):
 
@@ -142,7 +146,7 @@ def read_feed(source_feed, output=LogOutput()):
 
     ret = None
     try:
-        ret = requests.get(feed_url, headers=headers, verify=False, allow_redirects=False, timeout=20)
+        ret = requests.get(feed_url, headers=headers, verify=VERIFY_HTTPS, allow_redirects=False, timeout=20)
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
@@ -227,7 +231,7 @@ def read_feed(source_feed, output=LogOutput()):
 
                 new_url = start + end + new_url
 
-            ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20, verify=False)
+            ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20, verify=VERIFY_HTTPS)
             source_feed.status_code = ret.status_code
             source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
 
@@ -625,7 +629,7 @@ def parse_feed_xml(source_feed, feed_content, output):
             if hasattr(f.feed, 'links'):
                 for link in f.feed.links:
                     if 'rel' in link and link['rel'] == "next":
-                        ret = requests.get(link['href'], headers=headers, verify=False, allow_redirects=True, timeout=20)
+                        ret = requests.get(link['href'], headers=headers, verify=VERIFY_HTTPS, allow_redirects=True, timeout=20)
                         (pok, pchanged) = parse_feed_xml(source_feed, ret.content, output)
                         # print(link['href'])
                         # print((pok, pchanged))
@@ -843,7 +847,7 @@ def test_feed(source, cache=False, output=LogOutput()):
 
     output.write("\n" + str(headers))
 
-    ret = requests.get(source.feed_url, headers=headers, allow_redirects=False, verify=False, timeout=20)
+    ret = requests.get(source.feed_url, headers=headers, allow_redirects=False, verify=VERIFY_HTTPS, timeout=20)
 
     output.write("\n\n")
 
