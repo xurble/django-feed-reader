@@ -155,6 +155,14 @@ class Post(models.Model):
     image_url = models.CharField(max_length=512, blank=True, null=True)
 
     @property
+    def current_enclosures(self):
+        return self.enclosures.filter(is_current=True)
+
+    @property
+    def old_enclosures(self):
+        return self.enclosures.filter(is_current=False)
+
+    @property
     def title_url_encoded(self):
         try:
             ret = urlencode({"X": self.title})
@@ -185,12 +193,12 @@ class Enclosure(models.Model):
     type = models.CharField(max_length=256)
     medium = models.CharField(max_length=25, null=True, blank=True)
     description = models.CharField(max_length=512, null=True, blank=True)
+    is_current = models.BooleanField(default=True)
 
     @property
     def recast_link(self):
 
         # TODO: This needs to come out, it's just for recast
-
         return "/enclosure/%d/" % self.id
 
     @property
