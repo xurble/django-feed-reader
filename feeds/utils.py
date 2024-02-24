@@ -2,7 +2,8 @@ from django.db.models import Q, F
 from django.utils import timezone
 from django.conf import settings
 
-from feeds.models import Source, Enclosure, Post, WebProxy, Subscription
+
+from feeds.models import Source, Enclosure, Post, Subscription
 
 import feedparser as parser
 
@@ -15,15 +16,39 @@ import requests
 import pyrfc3339
 import json
 
-
-from random import choice
 import logging
 
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 
-class NullOutput(object):
+
+class LogOutput(object):
+
+    def __init__(self, log_level: int = logging.DEBUG):
+        self.log_level = log_level
+
     # little class for when we have no outputter
-    def write(self, str):
-        pass
+    def write(self, strin: str):
+
+        if strin.startswith("\n"):
+            strin = strin[1:]
+
+        if strin.endswith("\n"):
+            strin = strin[:-1]
+
+        logging.log(self.log_level, strin)
+
+
+@receiver(post_delete)
+def delete_subscriber(sender, instance, **kwargs):
+    if sender == Subscription and instance.source is not None:
+        instance.source.update_subscriber_count()
+
+
+@receiver(post_save)
+def save_subscriber(sender, instance, **kwargs):
+    if sender == Subscription and instance.source is not None:
+        instance.source.update_subscriber_count()
 
 
 def _customize_sanitizer(fp):
@@ -46,29 +71,8 @@ def _customize_sanitizer(fp):
 
 def get_agent(source_feed):
 
-    if source_feed.is_cloudflare:
-        agent = random_user_agent()
-        logging.error("using agent: {}".format(agent))
-    else:
-        agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=source_feed.num_subs)
-
+    agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=source_feed.subscriber_count)
     return agent
-
-
-def random_user_agent():
-
-    return choice([
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36 Edge/14.14393",
-        "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; .NET CLR 1.1.4322; .NET CLR 2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729)",
-        "Mozilla/5.0 (iPad; CPU OS 8_4_1 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12H321 Safari/600.1.4",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_1 like Mac OS X) AppleWebKit/603.1.30 (KHTML, like Gecko) Version/10.0 Mobile/14E304 Safari/602.1",
-        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-        "Mozilla/5.0 (Linux; Android 5.0; SAMSUNG SM-N900 Build/LRX21V) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/2.1 Chrome/34.0.1847.76 Mobile Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 6.0.1; SAMSUNG SM-G570Y Build/MMB29K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/44.0.2403.133 Mobile Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:53.0) Gecko/20100101 Firefox/53.0"
-    ])
 
 
 def fix_relative(html, url):
@@ -95,7 +99,7 @@ def fix_relative(html, url):
     return html
 
 
-def update_feeds(max_feeds=3, output=NullOutput()):
+def update_feeds(max_feeds=3, output=LogOutput()):
 
     todo = Source.objects.filter(Q(due_poll__lt=timezone.now()) & Q(live=True))
 
@@ -108,11 +112,8 @@ def update_feeds(max_feeds=3, output=NullOutput()):
     for src in sources:
         read_feed(src, output)
 
-    # kill shit proxies
-    WebProxy.objects.filter(address='X').delete()
 
-
-def read_feed(source_feed, output=NullOutput()):
+def read_feed(source_feed, output=LogOutput()):
 
     old_interval = source_feed.interval
 
@@ -126,26 +127,11 @@ def read_feed(source_feed, output=NullOutput()):
 
     headers = {"User-Agent": agent}  # identify ourselves
 
-    proxies = {}
-    proxy = None
-
     feed_url = source_feed.feed_url
     if source_feed.is_cloudflare:  # Fuck you !
 
         if settings.FEEDS_CLOUDFLARE_WORKER:
             feed_url = "{}/read/?target={}".format(settings.FEEDS_CLOUDFLARE_WORKER, feed_url)
-        else:
-            try:
-                proxy = get_proxy(output)
-
-                if proxy.address != "X":
-
-                    proxies = {
-                      'http': proxy.address,
-                      'https': proxy.address,
-                    }
-            except Exception:
-                pass
 
     if source_feed.etag:
         headers["If-None-Match"] = str(source_feed.etag)
@@ -156,7 +142,7 @@ def read_feed(source_feed, output=NullOutput()):
 
     ret = None
     try:
-        ret = requests.get(feed_url, headers=headers, verify=False, allow_redirects=False, timeout=20, proxies=proxies)
+        ret = requests.get(feed_url, headers=headers, verify=False, allow_redirects=False, timeout=20)
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
@@ -164,14 +150,6 @@ def read_feed(source_feed, output=NullOutput()):
         source_feed.last_result = ("Fetch error:" + str(ex))[:255]
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
-
-        if proxy:
-            source_feed.last_result = "Proxy failed. Next retry will use new proxy"
-            source_feed.status_code = 1  # this will stop us increasing the interval
-
-            output.write("\nBurning the proxy.")
-            proxy.delete()
-            source_feed.interval /= 2
 
     if ret is None and source_feed.status_code == 1:  # er ??
         pass
@@ -190,16 +168,8 @@ def read_feed(source_feed, output=NullOutput()):
         source_feed.live = False
     elif ret.status_code == 403:  # Forbidden
         if "Cloudflare" in ret.text or ("Server" in ret.headers and "cloudflare" in ret.headers["Server"]):
-
-            if source_feed.is_cloudflare and proxy is not None:
-                # we are already proxied - this proxy on cloudflare's shit list too?
-                proxy.delete()
-                output.write("\nProxy seemed to also be blocked, burning")
-                source_feed.interval /= 2
-                source_feed.last_result = "Proxy kind of worked but still got cloudflared."
-            else:
-                source_feed.is_cloudflare = True
-                source_feed.last_result = "Blocked by Cloudflare (grr)"
+            source_feed.is_cloudflare = True
+            source_feed.last_result = "Blocked by Cloudflare (grr)"
         else:
             source_feed.last_result = "Feed is no longer accessible."
             source_feed.live = False
@@ -341,7 +311,7 @@ def read_feed(source_feed, output=NullOutput()):
             ])
 
 
-def import_feed(source_feed, feed_body, content_type, output=NullOutput()):
+def import_feed(source_feed, feed_body, content_type, output=LogOutput()):
 
     ok = False
     changed = False
@@ -858,7 +828,7 @@ def parse_feed_json(source_feed, feed_content, output):
     return (ok, changed)
 
 
-def test_feed(source, cache=False, output=NullOutput()):
+def test_feed(source, cache=False, output=LogOutput()):
 
     headers = {"User-Agent": get_agent(source)}  # identify ourselves and also stop our requests getting picked up by any cache
 
@@ -882,50 +852,6 @@ def test_feed(source, cache=False, output=NullOutput()):
     output.write("\n\n")
 
     output.write(ret.text)
-
-
-def get_proxy(out=NullOutput()):
-
-    p = WebProxy.objects.first()
-
-    if p is None:
-        find_proxies(out)
-        p = WebProxy.objects.first()
-
-    out.write("Proxy: {}".format(str(p)))
-
-    return p
-
-
-def find_proxies(out=NullOutput()):
-
-    out.write("\nLooking for proxies\n")
-
-    try:
-        req = requests.get("https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list.txt", timeout=30)
-        if req.status_code == 200:
-            list = req.text
-
-            list = list.split("\n")
-
-            # remove header
-            list = list[4:]
-
-            for item in list:
-                if ":" in item:
-                    item = item.split(" ")[0]
-                    WebProxy(address=item).save()
-
-    except Exception as ex:
-        logging.error("Proxy scrape error: {}".format(str(ex)))
-        out.write("Proxy scrape error: {}\n".format(str(ex)))
-
-    if WebProxy.objects.count() == 0:
-        # something went wrong.
-        # to stop infinite loops we will insert duff proxys now
-        for i in range(20):
-            WebProxy(address="X").save()
-        out.write("No proxies found.\n")
 
 
 def get_subscription_list_for_user(user):
