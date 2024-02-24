@@ -46,6 +46,8 @@ class Source(models.Model):
     last_read = models.IntegerField(default=0)
     num_subs = models.IntegerField(default=1)
 
+    json = models.JSONField(null=True, blank=True)
+
     is_cloudflare = models.BooleanField(default=False)
 
     def __str__(self):
@@ -153,6 +155,7 @@ class Post(models.Model):
     author = models.CharField(max_length=255, blank=True, null=True)
     index = models.IntegerField(db_index=True)
     image_url = models.CharField(max_length=512, blank=True, null=True)
+    json = models.JSONField(null=True, blank=True)
 
     @property
     def current_enclosures(self):
