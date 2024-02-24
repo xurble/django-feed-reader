@@ -58,6 +58,14 @@ class Source(models.Model):
         self.last_read = self.max_index
         self.save()
 
+    def update_subscriber_count(self):
+        self.num_subs = Subscription.objects.filter(source=self).count()
+        self.save()
+
+    @property
+    def subscriber_count(self):
+        return self.num_subs
+
     @property
     def unread_count(self):
         """
@@ -236,12 +244,3 @@ class Subscription(models.Model):
                     self._unread_count += child.unread_count
 
             return self._unread_count
-
-
-class WebProxy(models.Model):
-    # this class if for Cloudflare avoidance and contains a list of potential
-    # web proxies that we can try, scraped from the internet
-    address = models.CharField(max_length=255)
-
-    def __str__(self):
-        return "Proxy:{}".format(self.address)
