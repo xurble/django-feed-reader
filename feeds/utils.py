@@ -459,13 +459,8 @@ def parse_feed_xml(source_feed, feed_content, output):
         # output.write(entries)
         entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
         for e in entries:
-
             # we are going to take the longest
             body = ""
-            if hasattr(e, "content"):
-                for c in e.content:
-                    if len(c.value) > len(body):
-                        body = c.value
 
             if hasattr(e, "summary"):
                 if len(e.summary) > len(body):
@@ -478,6 +473,13 @@ def parse_feed_xml(source_feed, feed_content, output):
             if hasattr(e, "description"):
                 if len(e.description) >= len(body):
                     body = e.description
+
+            # This can be a content:encoded html body
+            # but it can also be the alt-text of an an Enclosure
+            if hasattr(e, "content"):
+                for c in e.content:
+                    if c.get("type", "") == "text/html" and len(c.get("value", "")) > len(body):
+                        body = c.value
 
             body = fix_relative(body, source_feed.site_url)
             e_guid = getattr(e, 'guid', None)
@@ -546,6 +548,14 @@ def parse_feed_xml(source_feed, feed_content, output):
                 # find any files in media_content that aren't already declared as enclosures
                 if "media_content" in e:
                     for ee in e["media_content"]:
+
+                        # try and find a description for this.
+                        # The way the feedparser works makes this difficult
+                        # because it should be a child of ee but it isn't
+                        # so while, I don't think this is right, it works most of the time
+                        if len(e["media_content"]) == 1 and len(e.get("content", [])) == 1:
+                            ee["description"] = e["content"][0].get("value")
+
                         found = False
                         for ff in post_files:
                             if ff["href"] == ee["url"]:
