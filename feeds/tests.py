@@ -11,6 +11,9 @@ from feeds.utils import (
     get_unread_subscription_list_for_user
 )
 
+from feeds import utils
+from importlib import reload
+
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -398,6 +401,36 @@ class XMLFeedsTest(BaseTest):
 
         self.assertEqual(enc.href, "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba.jpeg")
         self.assertEqual(enc.description, "This is the alt text.")
+
+    def test_keep_old_enclosure(self, mock):
+
+        settings.FEEDS_KEEP_OLD_ENCLOSURES = True
+
+        # to pick up the settings change
+        reload(utils)
+
+        self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        import pdb; pdb.set_trace()
+        read_feed(src)
+
+        self._populate_mock(mock, status=200, test_file="media_content_changed.xml", content_type="application/rss+xml")
+
+        read_feed(src)
+        src.refresh_from_db()
+
+        post = src.posts.all()[0]
+        self.assertEqual(post.enclosures.count(), 2)
+
+        self.assertEqual(post.current_enclosures.count(), 1)
+        self.assertEqual(post.old_enclosures.count(), 1)
+
+        enc = post.current_enclosures.all()[0]
+
+        self.assertEqual(enc.href, "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba_new.jpeg")
 
     def test_sanitize_1(self, mock):
 

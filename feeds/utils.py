@@ -25,6 +25,10 @@ VERIFY_HTTPS = True
 if hasattr(settings, "FEEDS_VERIFY_HTTPS"):
     VERIFY_HTTPS = settings.FEEDS_VERIFY_HTTPS
 
+KEEP_OLD_ENCLOSURES = False
+if hasattr(settings, "FEEDS_KEEP_OLD_ENCLOSURES"):
+    KEEP_OLD_ENCLOSURES = settings.FEEDS_KEEP_OLD_ENCLOSURES
+
 
 class LogOutput(object):
 
@@ -564,7 +568,7 @@ def parse_feed_xml(source_feed, feed_content, output):
                             try:
                                 type = pe["type"]
                             except Exception:
-                                type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
+                                type = "unknown"
 
                             ee.type = type
 
@@ -577,7 +581,11 @@ def parse_feed_xml(source_feed, feed_content, output):
                             ee.save()
                             break
                     if not found_enclosure:
-                        ee.delete()
+                        if KEEP_OLD_ENCLOSURES:
+                            ee.is_current = False
+                            ee.save()
+                        else:
+                            ee.delete()
                     seen_files.append(ee.href)
 
                 for pe in post_files:
@@ -794,7 +802,11 @@ def parse_feed_json(source_feed, feed_content, output):
                                 ee.save()
                                 break
                     if not found_enclosure:
-                        ee.delete()
+                        if KEEP_OLD_ENCLOSURES:
+                            ee.is_current = False
+                            ee.save()
+                        else:
+                            ee.delete()
                     seen_files.append(ee.href)
 
                 if "attachments" in e:
