@@ -53,13 +53,6 @@ class Source(models.Model):
     def __str__(self):
         return self.display_name
 
-    def mark_read(self):
-        """
-            In a single user system, marm this feed as read
-        """
-        self.last_read = self.max_index
-        self.save()
-
     def update_subscriber_count(self):
         self.num_subs = Subscription.objects.filter(source=self).count()
         self.save()
@@ -67,6 +60,13 @@ class Source(models.Model):
     @property
     def subscriber_count(self):
         return self.num_subs
+
+    def mark_read(self):
+        """
+            In a single user system, marm this feed as read
+        """
+        self.last_read = self.max_index
+        self.save()
 
     @property
     def unread_count(self):
@@ -77,6 +77,16 @@ class Source(models.Model):
             into folders, use a Subscription (below)
         """
         return self.max_index - self.last_read
+
+    @property
+    def unread_posts(self, order_by="-created"):
+        """
+            In a single user system get all unread posts
+
+            If you need more than one user, or want to arrange feeds
+            into folders, use a Subscription (below)
+        """
+        return self.posts.filter(index__gt=self.last_read).order_by(order_by)
 
     @property
     def best_link(self):

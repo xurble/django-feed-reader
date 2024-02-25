@@ -282,6 +282,23 @@ class SubscriptionsTest(BaseTest):
             if s.source is None:
                 self.assertEqual(s.unread_count, 6)
 
+    def test_get_unread(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+
+        ls = timezone.now()
+        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src.save()
+
+        # Read the feed once to get the 1 post  and the etag
+        read_feed(src)
+        src.refresh_from_db()
+
+        self.assertEqual(src.unread_posts.count(), 1)
+        src.mark_read()
+        src.refresh_from_db()
+        self.assertEqual(src.unread_posts.count(), 0)
+
     def test_get_unread_count_for_single_folder(self, mock):
 
         user = User(email='x@example.com')
