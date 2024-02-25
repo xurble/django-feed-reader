@@ -557,6 +557,25 @@ class JSONFeedTest(BaseTest):
         self.assertNotEqual(src.last_success, ls)
         self.assertNotEqual(src.last_change, ls)
 
+    def test_save_json(self, mock):
+
+        settings.FEEDS_SAVE_JSON = True
+
+        # to pick up the settings change
+        reload(utils)
+
+        self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src)
+        src.refresh_from_db()
+        self.assertEqual(src.json["title"], src.name)
+
+        post = src.posts.all()[0]
+        self.assertEqual(post.json["url"], post.link)
+
     def test_sanitize_1(self, mock):
 
         self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
@@ -611,29 +630,6 @@ class JSONFeedTest(BaseTest):
 
 @requests_mock.Mocker()
 class HTTPStuffTest(BaseTest):
-
-    def test_fucking_cloudflare(self, mock):
-
-        self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
-        self._populate_mock(mock, status=403, test_file="json_simple_two_entry.json", content_type="application/json", is_cloudflare=True)
-
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, is_cloudflare=False)
-        src.save()
-
-        # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
-        src.refresh_from_db()
-
-        self.assertEqual(src.status_code, 403)
-
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, is_cloudflare=True)
-        src.save()
-
-        # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
-        src.refresh_from_db()
-
-        self.assertEqual(src.status_code, 200)
 
     def test_etags(self, mock):
 

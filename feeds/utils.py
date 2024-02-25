@@ -789,6 +789,9 @@ def parse_feed_json(source_feed, feed_content, output):
             except Exception:
                 p.author = ""
 
+            if SAVE_JSON:
+                p.json = e
+
             p.save()
 
             try:
@@ -854,6 +857,11 @@ def parse_feed_json(source_feed, feed_content, output):
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
+
+        if SAVE_JSON:
+            f['items'] = []
+            source_feed.json = f
+            source_feed.save(update_fields=["json"])
 
     return (ok, changed)
 
