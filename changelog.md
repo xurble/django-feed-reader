@@ -1,9 +1,17 @@
 
+### 2.0.0
+- Feature: Convenience method to get unread posts when running single user
+- Feature: Store (optionally) the full parsed feed and items as JSON to allow full access to all features of the feed
+- Feature: Keeps old enclosures when url changes
+- Feature: Automatically manage subscription count for feeds
+- Fix: Insecure connection warning
+- Misc: Removed local web proxying as it no longer worked
+
 ### 1.1.0
-- Add ability to manage read status, put feeds in folders, have multiple users
+- Feature: Add ability to manage read status, put feeds in folders, have multiple users
 
 ### 1.0.9
-- Decreases the size of GUID slightly, was not compatible with MySQL
+- Fix: Decreases the size of GUID slightly, was not compatible with MySQL
 
 ### 1.0.8
 - Increases the size of GUIDs
