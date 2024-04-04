@@ -1,25 +1,22 @@
-from django.db.models import Q, F
-from django.utils import timezone
-from django.conf import settings
 
 
-from feeds.models import Source, Enclosure, Post, Subscription
-
-import feedparser as parser
-
-import time
 import datetime
 import hashlib
-
-import requests
-
-import pyrfc3339
 import json
-
 import logging
+import time
 
+
+from django.db.models import Q, F
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
+from django.utils import timezone
+from django.conf import settings
+from dripfeed import DripFeed, DripFeedException
+import feedparser as parser
+from feeds.models import Source, Enclosure, Post, Subscription
+import pyrfc3339
+import requests
 
 VERIFY_HTTPS = True
 if hasattr(settings, "FEEDS_VERIFY_HTTPS"):
@@ -32,6 +29,14 @@ if hasattr(settings, "FEEDS_KEEP_OLD_ENCLOSURES"):
 SAVE_JSON = False
 if hasattr(settings, "FEEDS_SAVE_JSON"):
     SAVE_JSON = settings.FEEDS_SAVE_JSON
+
+DRIPFEED_KEY = None
+if hasattr(settings, "FEEDS_DRIPFEED_KEY"):
+    DRIPFEED_KEY = settings.FEEDS_DRIPFEED_KEY
+
+CLOUDFLARE_WORKER = None
+if hasattr(settings, "FEEDS_CLOUDFLARE_WORKER"):
+    CLOUDFLARE_WORKER = settings.FEEDS_CLOUDFLARE_WORKER
 
 
 class LogOutput(object):
@@ -141,9 +146,11 @@ def read_feed(source_feed, output=LogOutput()):
 
     feed_url = source_feed.feed_url
     if source_feed.is_cloudflare:  # Fuck you !
-
-        if settings.FEEDS_CLOUDFLARE_WORKER:
-            feed_url = "{}/read/?target={}".format(settings.FEEDS_CLOUDFLARE_WORKER, feed_url)
+        if source_feed.alt_url:
+            feed_url = source_feed.alt_url
+        else:
+            if CLOUDFLARE_WORKER:
+                feed_url = f"{CLOUDFLARE_WORKER}/read/?target={feed_url}"
 
     if source_feed.etag:
         headers["If-None-Match"] = str(source_feed.etag)
@@ -182,6 +189,13 @@ def read_feed(source_feed, output=LogOutput()):
         if "Cloudflare" in ret.text or ("Server" in ret.headers and "cloudflare" in ret.headers["Server"]):
             source_feed.is_cloudflare = True
             source_feed.last_result = "Blocked by Cloudflare (grr)"
+            if DRIPFEED_KEY:
+                df = DripFeed(DRIPFEED_KEY)
+                try:
+                    dripfeed = df.get_or_add_feed(source_feed.feed_url, live=True)
+                    source_feed.alt_url = dripfeed["dripfeed_url"]
+                except DripFeedException as ex:
+                    source_feed.last_result = f"Failed add to Dripfeed: {ex.detail}"
         else:
             source_feed.last_result = "Feed is no longer accessible."
             source_feed.live = False
@@ -319,7 +333,7 @@ def read_feed(source_feed, output=LogOutput()):
                 "last_modified", "etag", "last_302_start",
                 "last_302_url", "last_success", "live",
                 "status_code", "max_index", "is_cloudflare",
-                "last_change",
+                "last_change", "alt_url"
             ])
 
 
