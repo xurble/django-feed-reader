@@ -45,6 +45,15 @@ autodoc_typehints = 'description'
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
+try:
+    import furo
+
+    html_theme = 'furo'
+    html_theme_options = {
+        "navigation_with_keys": True,
+    }
+except ImportError:
+    html_theme = 'default'
 
 
 
