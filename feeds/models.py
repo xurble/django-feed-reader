@@ -23,6 +23,7 @@ class Source(models.Model):
     # This is an actual feed that we poll
     name = models.CharField(max_length=255, blank=True, null=True)
     site_url = models.CharField(max_length=255, blank=True, null=True)
+    alt_url = models.URLField(blank=True, null=True)
     feed_url = models.CharField(max_length=512)
     image_url = models.CharField(max_length=512, blank=True, null=True)
 
