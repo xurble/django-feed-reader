@@ -20,7 +20,9 @@ class ExpiresGenerator(object):
 
 
 class Source(models.Model):
-    # This is an actual feed that we poll
+    """
+        This is an actual source
+    """
     name = models.CharField(max_length=255, blank=True, null=True)
     site_url = models.CharField(max_length=255, blank=True, null=True)
     alt_url = models.URLField(blank=True, null=True)
