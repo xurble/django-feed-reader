@@ -1,13 +1,13 @@
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 
 from feeds.utils import update_feeds
+
 
 class Command(BaseCommand):
     """
         This command refreshes the RSS feeds
     """
-
 
     help = 'Rrefreshes the RSS feeds'
 
@@ -15,4 +15,4 @@ class Command(BaseCommand):
 
         update_feeds(30)
 
-        self.stdout.write(self.style.SUCCESS('Finished'))
+        self.stdout.write(self.style.SUCCESS('\nFinished'))

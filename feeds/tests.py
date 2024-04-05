@@ -3,15 +3,18 @@ from django.conf import settings
 
 # Create your tests here.
 from feeds.models import Source, Subscription
-from feeds.utils import (
-    read_feed,
+from feeds.utils_internal import (
     fix_relative,
     hash_body,
+)
+from feeds.utils import (
+    read_feed,
     get_subscription_list_for_user,
     get_unread_subscription_list_for_user
 )
 
 from feeds import utils
+from feeds import utils_internal
 from importlib import reload
 
 from django.contrib.auth import get_user_model
@@ -27,6 +30,13 @@ User = get_user_model()
 
 TEST_FILES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata")
 BASE_URL = 'http://feed.com/'
+
+
+class NullOutput(object):
+
+    # little class to stop the tests filling the console window
+    def write(self, strin: str):
+        pass
 
 
 class UtilsTest(TestCase):
@@ -60,6 +70,7 @@ class BaseTest(TransactionTestCase):
             else:
                 mock.register_uri('GET', url, request_headers={'If-None-Match': etag}, status_code=status, content=content, headers=ret_headers)
 
+
 @requests_mock.Mocker()
 class SubscriptionsTest(BaseTest):
 
@@ -72,7 +83,7 @@ class SubscriptionsTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.unread_count, 1)
@@ -129,7 +140,7 @@ class SubscriptionsTest(BaseTest):
         user = User(email='x@example.com')
         user.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
 
         sub = Subscription(user=user, source=src)
         sub.save()
@@ -289,7 +300,7 @@ class SubscriptionsTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.unread_posts.count(), 1)
@@ -354,7 +365,7 @@ class XMLFeedsTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -372,7 +383,7 @@ class XMLFeedsTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.description, 'SU: Three nerds discussing tech, Apple, programming, and loosely related matters.')
@@ -390,7 +401,7 @@ class XMLFeedsTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.description, 'Public posts from @xurble@toot.community')
@@ -404,7 +415,7 @@ class XMLFeedsTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         post = src.posts.all()[0]
@@ -423,17 +434,18 @@ class XMLFeedsTest(BaseTest):
 
         # to pick up the settings change
         reload(utils)
+        reload(utils_internal)
 
         self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
 
         self._populate_mock(mock, status=200, test_file="media_content_changed.xml", content_type="application/rss+xml")
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         post = src.posts.all()[0]
@@ -452,13 +464,14 @@ class XMLFeedsTest(BaseTest):
 
         # to pick up the settings change
         reload(utils)
+        reload(utils_internal)
 
         self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
         self.assertEqual(src.json["feed"]["link"], "https://toot.community/@xurble")
 
@@ -477,7 +490,7 @@ class XMLFeedsTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -497,7 +510,7 @@ class XMLFeedsTest(BaseTest):
         src.save()
 
         # read the feed to update the name
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -511,7 +524,7 @@ class XMLFeedsTest(BaseTest):
         src.save()
 
         # read the feed to update the name
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -529,7 +542,7 @@ class XMLFeedsTest(BaseTest):
         src = Source(name=test_name, feed_url=BASE_URL, interval=0)
         src.save()
         # read the feed to update the name
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
         self.assertEqual(src.status_code, 200)
         return src
@@ -562,7 +575,7 @@ class JSONFeedTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -578,13 +591,14 @@ class JSONFeedTest(BaseTest):
 
         # to pick up the settings change
         reload(utils)
+        reload(utils_internal)
 
         self._populate_mock(mock, status=200, test_file="json_simple_two_entry.json", content_type="application/json")
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
         self.assertEqual(src.json["title"], src.name)
 
@@ -599,7 +613,7 @@ class JSONFeedTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -619,7 +633,7 @@ class JSONFeedTest(BaseTest):
         src.save()
 
         # read the feed to update the name
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -633,7 +647,7 @@ class JSONFeedTest(BaseTest):
         src.save()
 
         # read the feed to update the name
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -655,7 +669,7 @@ class HTTPStuffTest(BaseTest):
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -664,7 +678,7 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.etag, "an-etag")
 
         # Read the feed again to get a 304 and a small increment to the interval
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.posts.count(), 1)  # should have no more
@@ -679,7 +693,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)  # it returned a page, but not a  feed
@@ -696,7 +710,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 403)  # it returned a page, but not a  feed
@@ -719,7 +733,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 403)  # it returned a page, but not a  feed
@@ -745,7 +759,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 403)  # it returned a page, but not a  feed
@@ -770,7 +784,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 403)  # it returned a page, but not a  feed
@@ -787,7 +801,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 410)  # it returned a page, but not a  feed
@@ -801,7 +815,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 404)  # it returned a page, but not a  feed
@@ -820,7 +834,7 @@ class HTTPStuffTest(BaseTest):
 
         self.assertIsNone(src.last_302_start)
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -831,7 +845,7 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
 
         # do it all again -  shouldn't change
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)  # it returned a page, but not a  feed
@@ -844,7 +858,7 @@ class HTTPStuffTest(BaseTest):
         # now we test making it permaent
         src.last_302_start = timezone.now() - timedelta(days=365)
         src.save()
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -864,14 +878,14 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 301)
         self.assertEqual(src.interval, 60)
         self.assertEqual(src.feed_url, new_url)
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 200)
@@ -886,7 +900,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 500)  # error
@@ -901,7 +915,7 @@ class HTTPStuffTest(BaseTest):
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src)
+        read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 503)  # error!

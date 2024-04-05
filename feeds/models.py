@@ -3,7 +3,8 @@ import datetime
 from urllib.parse import urlencode
 import logging
 
-
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 from django.conf import settings
 from django.db import models
 import django.utils as django_utils
@@ -21,7 +22,7 @@ class ExpiresGenerator(object):
 
 class Source(models.Model):
     """
-        This is an actual source
+        This class represents a Feed to be read.
     """
     name = models.CharField(max_length=255, blank=True, null=True)
     site_url = models.CharField(max_length=255, blank=True, null=True)
@@ -268,3 +269,17 @@ class Subscription(models.Model):
                     self._unread_count += child.unread_count
 
             return self._unread_count
+
+
+
+@receiver(post_delete)
+def delete_subscriber(sender, instance, **kwargs):
+    if sender == Subscription and instance.source is not None:
+        instance.source.update_subscriber_count()
+
+
+@receiver(post_save)
+def save_subscriber(sender, instance, **kwargs):
+    if sender == Subscription and instance.source is not None:
+        instance.source.update_subscriber_count()
+
