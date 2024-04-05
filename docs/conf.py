@@ -3,8 +3,6 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-
-
 import os
 import sys
 import django
@@ -22,8 +20,6 @@ sys.path.append(os.path.abspath('..'))
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_settings')
 django.setup()
-
-
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -45,15 +41,4 @@ autodoc_typehints = 'description'
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
-try:
-    import furo
-
-    html_theme = 'furo'
-    html_theme_options = {
-        "navigation_with_keys": True,
-    }
-except ImportError:
-    html_theme = 'default'
-
-
-
+html_theme = 'sphinx_rtd_theme'

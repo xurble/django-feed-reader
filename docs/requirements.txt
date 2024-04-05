@@ -4,3 +4,4 @@ BeautifulSoup4
 requests
 pyrfc3339
 django
+sphinx-rtd-theme
