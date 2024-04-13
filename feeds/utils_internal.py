@@ -216,14 +216,17 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
             if hasattr(e, "summary"):
                 if len(e.summary) > len(body):
                     body = e.summary
+                    body = body.strip()
 
             if hasattr(e, "summary_detail"):
                 if len(e.summary_detail.value) >= len(body):
                     body = e.summary_detail.value
+                    body = body.strip()
 
             if hasattr(e, "description"):
                 if len(e.description) >= len(body):
                     body = e.description
+                    body = body.strip()
 
             # This can be a content:encoded html body
             # but it can also be the alt-text of an an Enclosure

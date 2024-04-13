@@ -1,8 +1,17 @@
-from django.test import TestCase, TransactionTestCase
+
+from datetime import timedelta
+from importlib import reload
+import os
+
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.test import TestCase, TransactionTestCase
+from django.utils import timezone
+import requests_mock
+
 
 # Create your tests here.
-from feeds.models import Source, Subscription
+from feeds.models import Source, Subscription, Post
 from feeds.utils_internal import (
     fix_relative,
     hash_body,
@@ -15,16 +24,7 @@ from feeds.utils import (
 
 from feeds import utils
 from feeds import utils_internal
-from importlib import reload
 
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-
-from datetime import timedelta
-
-import os
-
-import requests_mock
 
 User = get_user_model()
 
@@ -88,11 +88,15 @@ class SubscriptionsTest(BaseTest):
 
         self.assertEqual(src.unread_count, 1)
 
+        self.assertEqual(src.unread_posts.count(), 1)
+
         src.mark_read()
 
         src.refresh_from_db()
 
         self.assertEqual(src.unread_count, 0)
+
+        self.assertEqual(src.unread_posts.count(), 0)
 
     def test_subscriber_count(self, mock):
 
@@ -205,7 +209,7 @@ class SubscriptionsTest(BaseTest):
         self.assertEqual(all_subs_and_folder, 11)
         self.assertEqual(len(sub_list), 6)
 
-    def test_basic_subscription_unread_counts(self, mock):
+    def test_basic_subscription_read(self, mock):
 
         user = User(email='x@example.com')
         user.save()
@@ -214,6 +218,7 @@ class SubscriptionsTest(BaseTest):
             ls = timezone.now()
             src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
+            src.last_read
             src.save()
 
             sub = Subscription(user=user, source=src)
@@ -228,7 +233,12 @@ class SubscriptionsTest(BaseTest):
             src.max_index = 1
             src.save()
 
+            # make the posts get created earlier as they increase in index to check the ordering below
+            p = Post(source=src, title=f"post{i}", created=timezone.now() - timedelta(days=i), index=1, guid=f"src-{src.id}-post-{i}")
+            p.save()
+
             sub = Subscription(user=user, source=src, parent=folder)
+            src.last_read = 0
             sub.save()
 
         all_subs_and_folder = Subscription.objects.filter(user=user).count()
@@ -242,16 +252,28 @@ class SubscriptionsTest(BaseTest):
             if s.source is None:
                 self.assertEqual(s.unread_count, 5)
 
-    def test_nested_subscription_unread_counts(self, mock):
+                self.assertEqual(len(s.unread_posts), 5)
+
+                i = 5
+                for p in s.unread_posts:
+                    i -= 1
+                    self.assertEqual(p.title, f"post{i}")
+
+    def test_nested_subscription_read(self, mock):
 
         user = User(email='x@example.com')
         user.save()
 
+        pcount = 0
+
         for i in range(3):
             ls = timezone.now()
             src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
-            src.max_index = 1
             src.save()
+
+            for j in range(3):
+                p = Post(source=src, title="post", created=timezone.now())
+                p.save()
 
             sub = Subscription(user=user, source=src)
             sub.save()
@@ -262,10 +284,15 @@ class SubscriptionsTest(BaseTest):
         for i in range(3):
             ls = timezone.now()
             src = Source(name="folder1_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
-            src.max_index = 1
             src.save()
 
+            for j in range(3):
+                p = Post(source=src, title=f"post-{pcount}", created=timezone.now()-timedelta(days=pcount))
+                p.save()
+                pcount += 1
+
             sub = Subscription(user=user, source=src, parent=folder)
+            sub.name = f"Sub-1-{i}"
             sub.save()
 
         folder2 = Subscription(user=user, source=None, name="AFolder2", parent=folder)
@@ -274,8 +301,12 @@ class SubscriptionsTest(BaseTest):
         for i in range(3):
             ls = timezone.now()
             src = Source(name="folder2_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
-            src.max_index = 1
             src.save()
+
+            for j in range(3):
+                p = Post(source=src, title=f"post-{pcount}", created=timezone.now()-timedelta(days=pcount))
+                p.save()
+                pcount += 1
 
             sub = Subscription(user=user, source=src, parent=folder2)
             sub.save()
@@ -289,7 +320,21 @@ class SubscriptionsTest(BaseTest):
 
         for s in sub_list:
             if s.source is None:
-                self.assertEqual(s.unread_count, 6)
+                self.assertEqual(s.unread_count, 18)
+                self.assertEqual(len(s.unread_posts), 18)
+                last = None
+                for p in s.unread_posts:
+                    if last:
+                        self.assertGreater(p.created, last.created)
+                    last = p
+
+        (posts, paginator) = folder.get_paginated_posts(1, posts_per_page=10)
+        self.assertEqual(len(posts), 10)
+        self.assertEqual(paginator.num_pages, 2)
+        self.assertEqual(posts[0].subscription.name, "Sub-1-0")
+
+        (posts, paginator) = folder.get_paginated_posts(2, posts_per_page=10)
+        self.assertEqual(len(posts), 8)
 
     def test_get_unread(self, mock):
 

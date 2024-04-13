@@ -317,7 +317,7 @@ def test_feed(source_feed: Source, cache: bool = False, output: TextIO = stdout)
 
 
 def get_subscription_list_for_user(user) -> List[Subscription]:
-    """Helper method to get all subscriptions for a user.
+    """Helper method to get all root-level subscriptions for a user.
 
     :param user: The user who's subscriptions we want'.
     :type user: User
@@ -332,7 +332,7 @@ def get_subscription_list_for_user(user) -> List[Subscription]:
 
 
 def get_unread_subscription_list_for_user(user) -> List[Subscription]:
-    """Helper method to get all subscriptions for a user that have unread items.
+    """Helper method to get all root-level subscriptions for a user that have unread items.
 
     :param user: The user who's subscriptions we want'.
     :type user: User
