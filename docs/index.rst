@@ -10,7 +10,9 @@ Welcome to django-feed-reader's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   modules/overview.rst
    modules/about.rst
+   modules/commands.rst
    modules/models.rst
    modules/utils.rst
 
