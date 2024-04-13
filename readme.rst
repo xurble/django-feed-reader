@@ -89,7 +89,9 @@ to track your read state.
 All posts come in unread.  You can get the current number of unread posts from
 ``Source.unread_count``.
 
-To get all the unread posts from a feed in chronological order
+
+
+
 
 
 

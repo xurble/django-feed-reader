@@ -1,6 +1,7 @@
 
 ### 2.0.0
-- Feature: Convenience method to get unread posts when running single user
+- Feature: Convenience method to get unread posts / mark read when running single user
+- Feature: Convenience methods on Subscription to get read and unread posts and mark read
 - Feature: Store (optionally) the full parsed feed and items as JSON to allow full access to all features of the feed
 - Feature: Keeps old enclosures when url changes
 - Feature: Automatically manage subscription count for feeds

@@ -100,15 +100,6 @@ class Source(models.Model):
         return self.max_index - self.last_read
 
     @property
-    def unread_posts(self):
-        """**ResultSet[Post]** In a single user system get all unread posts
-
-        If you need more than one user, or want to arrange feeds
-        into folders, use a Subscription
-        """
-        return self.posts.filter(index__gt=self.last_read)
-
-    @property
     def best_link(self):
         """**str** The best user facing link to this feed.
 
@@ -185,6 +176,47 @@ class Source(models.Model):
             css = "#%02x%02x00" % (red, green)
 
         return css
+
+    def get_unread_posts(self, oldest_first=False):
+        """**ResultSet[Post]** In a single user system get all unread posts
+
+        If you need more than one user, or want to arrange feeds
+        into folders, use a Subscription
+        """
+
+        if oldest_first:
+            return self.posts.filter(index__gt=self.last_read)
+        else:
+            return self.post.filter(index__gt=self.last_read).order_by("-created")
+
+    def get_paginated_posts(self, page: int, oldest_first: bool = False, posts_per_page: int = 20):
+        """Get a posts from the feed a page at a time
+
+        :param page: The page to fetch.
+        :type page: int
+
+        :param oldest_first: Get the posts in reverse chronological order (default True)
+        :type oldest_first: bool
+
+        :param posts_per_page: The number of posts per page (default 20)
+        :type posts_per_page: int
+
+        :return: A tuple containting the page of posts and the paginator
+        :rtype: Tuple[List[Post], Paginator]
+        """
+
+        post_list = Post.objects.filter(source=self)
+        if oldest_first:
+            post_list = post_list.order_by("-created")
+
+        paginator = Paginator(post_list, posts_per_page)
+
+        try:
+            posts = paginator.page(page)
+        except (EmptyPage, InvalidPage):
+            posts = paginator.page(1)
+
+        return (posts, paginator)
 
     def mark_read(self):
         """In a single user system, mark this feed as read
@@ -398,12 +430,11 @@ class Subscription(models.Model):
         for child in Subscription.objects.filter(parent=self):
             child._gather_posts(post_list)
 
-    @property
-    def unread_posts(self):
+    def get_unread_posts(self, oldest_first=True):
         """ Returns all the unread posts in a subscription"""
         posts = []
         self._gather_posts(posts)
-        posts.sort(key=lambda post: post.created)  # Sort in ascending order
+        posts.sort(reverse=(not oldest_first), key=lambda post: post.created)  # Sort in ascending order
         return posts
 
     def _gather_sources(self, source_list: dict):
@@ -414,7 +445,7 @@ class Subscription(models.Model):
         for child in Subscription.objects.filter(parent=self):
             child._gather_sources(source_list)
 
-    def get_paginated_posts(self, page: int, posts_per_page: int = 20):
+    def get_paginated_posts(self, page: int, oldest_first: bool =True, posts_per_page: int = 20):
         """Get a posts from the feed a page at a time
 
         :param page: The page to fetch.
