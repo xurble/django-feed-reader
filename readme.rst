@@ -124,15 +124,6 @@ There are two helper methods in the ``utils`` module to help manage subscription
 parent is None.  ``get_unread_subscription_list_for_user`` will do the same but only returns
 Subscriptions that are unread or that have unread children if they are a folder.
 
-Dealing with Cloudflare
------------------------
 
-Depending on where you run your server, you may run into problems with Cloudflare's web captcha.  Plenty of sites out there set up their Cloudflare to have default security on their RSS feed and this can block server-side RSS readers.
-
-It's a huge pain and affects lots of self-hosted RSS readers. Seriously, Google it.
-
-``django-feed-reader`` will do it's utmost to get these feeds anyway through the judicious use of public proxy servers, but is haphazard and you cannot rely on the scheduling of such feeds.
-
-Feeds blocked by Cloudflare will have the ``is_cloudflare`` flag set on their ``Source`` and will update on a best-efforts basis.
 
 For more details see the `full documentation <https//django-feed-reader.readthedocs.io>`_.
