@@ -88,7 +88,7 @@ class SubscriptionsTest(BaseTest):
 
         self.assertEqual(src.unread_count, 1)
 
-        self.assertEqual(src.unread_posts.count(), 1)
+        self.assertEqual(len(src.get_unread_posts()), 1)
 
         src.mark_read()
 
@@ -96,7 +96,7 @@ class SubscriptionsTest(BaseTest):
 
         self.assertEqual(src.unread_count, 0)
 
-        self.assertEqual(src.unread_posts.count(), 0)
+        self.assertEqual(len(src.get_unread_posts()), 0)
 
     def test_subscriber_count(self, mock):
 
@@ -252,10 +252,10 @@ class SubscriptionsTest(BaseTest):
             if s.source is None:
                 self.assertEqual(s.unread_count, 5)
 
-                self.assertEqual(len(s.unread_posts), 5)
+                self.assertEqual(len(s.get_unread_posts()), 5)
 
                 i = 5
-                for p in s.unread_posts:
+                for p in s.get_unread_posts():
                     i -= 1
                     self.assertEqual(p.title, f"post{i}")
 
@@ -321,9 +321,9 @@ class SubscriptionsTest(BaseTest):
         for s in sub_list:
             if s.source is None:
                 self.assertEqual(s.unread_count, 18)
-                self.assertEqual(len(s.unread_posts), 18)
+                self.assertEqual(len(s.get_unread_posts()), 18)
                 last = None
-                for p in s.unread_posts:
+                for p in s.get_unread_posts():
                     if last:
                         self.assertGreater(p.created, last.created)
                     last = p
@@ -348,10 +348,10 @@ class SubscriptionsTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
-        self.assertEqual(src.unread_posts.count(), 1)
+        self.assertEqual(len(src.get_unread_posts()), 1)
         src.mark_read()
         src.refresh_from_db()
-        self.assertEqual(src.unread_posts.count(), 0)
+        self.assertEqual(len(src.get_unread_posts()), 0)
 
     def test_get_unread_count_for_single_folder(self, mock):
 

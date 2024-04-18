@@ -7,9 +7,12 @@ from feeds.utils import update_feeds
 class Command(BaseCommand):
     """
         This command refreshes the RSS feeds
+
+        Usage is ``python manage.py refreshfeeds``
+
     """
 
-    help = 'Rrefreshes the RSS feeds'
+    help = 'Refreshes the RSS feeds, 30 at a time'
 
     def handle(self, *args, **options):
 

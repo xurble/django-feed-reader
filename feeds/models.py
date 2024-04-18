@@ -86,12 +86,12 @@ class Source(models.Model):
         return self.display_name
 
     @property
-    def subscriber_count(self):
+    def subscriber_count(self) -> int:
         """**int** he number of subscribers this feed has"""
         return self.num_subs
 
     @property
-    def unread_count(self):
+    def unread_count(self) -> int:
         """**int** In a single user system how many unread articles are there?
 
         If you need more than one user, or want to arrange feeds
@@ -100,7 +100,7 @@ class Source(models.Model):
         return self.max_index - self.last_read
 
     @property
-    def best_link(self):
+    def best_link(self) -> str:
         """**str** The best user facing link to this feed.
 
         Will be the **site_url** if it's present, otherwise **feed_url**
@@ -111,7 +111,7 @@ class Source(models.Model):
             return self.site_url
 
     @property
-    def display_name(self):
+    def display_name(self) -> str:
         """**str** The best user-facing name for this feed.
 
         Will be the the feed's **name** as described in the feed if there is one.
@@ -123,7 +123,7 @@ class Source(models.Model):
             return self.name
 
     @property
-    def garden_style(self):
+    def garden_style(self) -> str:
         """Visual representation of how health the feed is Green -> Red
 
         Internal to FeedThing and Recast and should probably be moved
@@ -150,7 +150,7 @@ class Source(models.Model):
         return css
 
     @property
-    def health_box(self):
+    def health_box(self) -> str:
         """Visual representation of how health the feed is Green -> Red
 
         Internal to FeedThing and Recast and should probably be moved
@@ -177,19 +177,19 @@ class Source(models.Model):
 
         return css
 
-    def get_unread_posts(self, oldest_first=False):
-        """**ResultSet[Post]** In a single user system get all unread posts
+    def get_unread_posts(self, newest_first: bool = True) -> list:
+        """**List[Post]** In a single user system get all unread posts
 
         If you need more than one user, or want to arrange feeds
         into folders, use a Subscription
         """
 
-        if oldest_first:
-            return self.posts.filter(index__gt=self.last_read)
+        if newest_first:
+            return list(self.posts.filter(index__gt=self.last_read).order_by("-created"))
         else:
-            return self.post.filter(index__gt=self.last_read).order_by("-created")
+            return list(self.post.filter(index__gt=self.last_read).order_by("created"))
 
-    def get_paginated_posts(self, page: int, oldest_first: bool = False, posts_per_page: int = 20):
+    def get_paginated_posts(self, page: int, newest_first: bool = True, posts_per_page: int = 20):
         """Get a posts from the feed a page at a time
 
         :param page: The page to fetch.
@@ -206,8 +206,10 @@ class Source(models.Model):
         """
 
         post_list = Post.objects.filter(source=self)
-        if oldest_first:
+        if newest_first:
             post_list = post_list.order_by("-created")
+        else:
+            post_list = post_list.order_by("created")
 
         paginator = Paginator(post_list, posts_per_page)
 
@@ -400,10 +402,12 @@ class Subscription(models.Model):
 
     is_river = models.BooleanField(default=False)
     """**bool** Indicates if the feed/folder should be displayed in a "River of News" style"""
+
     name = models.CharField(max_length=255)
+    """**str** The display name of the subscription - typically should be set to the name of the source where present"""
 
     @property
-    def unread_count(self):
+    def unread_count(self) -> int:
         """**int** The number of undread posts in teh subscription
 
             If the subscription is acting as a folder, this will total
@@ -438,7 +442,6 @@ class Subscription(models.Model):
         return posts
 
     def _gather_sources(self, source_list: dict):
-
         if self.source:
             source_list[self.source.id] = self
 

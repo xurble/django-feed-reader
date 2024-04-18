@@ -11,7 +11,6 @@ Welcome to django-feed-reader's documentation!
    :caption: Contents:
 
    modules/overview.rst
-   modules/about.rst
    modules/commands.rst
    modules/models.rst
    modules/utils.rst

@@ -36,19 +36,25 @@ A feed is represented by a ``Source`` object which has (among other things) a ``
 
 To start reading a feed, simply create a new ``Source`` with the desired ``feed_url``
 
-``Sources`` have ``Posts`` a which contain the content.
+``Source`` objects have ``Post`` children  which contain the content.
 
-``Posts`` may have ``Enclosures`` s which is what podcasts use to send their audio.  The app does not download enclosures, if you want to do that you will need to it in your project using the url provided.
+A ``Post`` may have ``Enclosure`` (or more) which is what podcasts use to send their audio.
+The app does not download enclosures, if you want to do that you will need to do that in your project
+using the url provided.
 
 
 Refreshing feeds
 ----------------
 
-To conserve resources with large feed lists, the module will adjust how often it polls feeds based on how often they are updated.  The fastest it will poll a feed is every hour. The slowest it will poll is every 24 hours.
+To conserve resources with large feed lists, the module will adjust how often it polls feeds
+based on how often they are updated.  The fastest it will poll a feed is every hour. The
+slowest it will poll is every 24 hours.
 
-Sources that don't get updated are polled progressively more slowly until the 24 hour limit is reached.  When a feed changes, its polling frequency increases.
+Sources that don't get updated are polled progressively more slowly until the 24 hour limit is
+reached.  When a feed changes, its polling frequency increases.
 
-You will need to decided how and when to run the poller.  When the poller runs, it checks all feeds that are currently due.  The ideal frequency to run it is every 5 - 10 minutes.
+You will need to decided how and when to run the poller.  When the poller runs, it checks all
+feeds that are currently due.  The ideal frequency to run it is every 5 - 10 minutes.
 
 Polling with cron
 -----------------
@@ -83,15 +89,40 @@ There are two ways to track the read/unread state of feeds depending on your nee
 Single User Installations
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If your usage is just for a single user, then there are helper methods on a ``Source``
+If your usage is just for a single user, then there are helper methods on a Source
 to track your read state.
 
 All posts come in unread.  You can get the current number of unread posts from
 ``Source.unread_count``.
 
-To get all the unread posts from a feed in chronological order
+To get a ResultSet of all the unread posts from a feed call ``Source.get_unread_posts``
 
+To mark all posts on a fed as read call ``Source.mark_read``
 
+To get all of the posts in a feed regardless of read status, a page at a time call
+``Source.get_paginated_posts`` which returns a tuple of (Posts, Paginator)
+
+Multi-User Installations
+^^^^^^^^^^^^^^^^^^^^^^^^
+To allow multiple users to follow the same feed with individual read/unread status,
+create a new ``Subscription`` for that Source and User.
+
+Subscription has the same helper methods for retrieving posts and marking read as
+Source.
+
+You can also arrange feeds into a folder-like hierarchy using Subscriptions.
+Every Subscription has an optional ``parent``.  Subscriptions with a ``None`` parent
+are considered at the root level.  By convention, Subscriptions that are acting as parent
+folders should have a ``None`` ``source``
+
+Subscriptions have a ``name`` field which by convention should be a display name if it is
+a folder or the name of the Source it is tracking.  However this can be set to any
+value if you want to give a personally-meaningful name to a feed who's name is cryptic.
+
+There are two helper methods in the ``utils`` module to help manage subscriptions as folders.
+``get_subscription_list_for_user`` will return all Subscriptions for a User where the
+parent is None.  ``get_unread_subscription_list_for_user`` will do the same but only returns
+Subscriptions that are unread or that have unread children if they are a folder.
 
 Dealing with Cloudflare
 -----------------------
