@@ -44,6 +44,9 @@ Optional Settings
    - If set, Sources and Posts will store a JSON representation of the all the data retrieved
      from the feed so that uncommon or custom attributes can be retrieved.  Caution - this will
      dramatically increase tha amount of space used in your database.
+- ``DRIPFEED_KEY`` (Default None)
+   - If set to a valid Dripfeed API Key, then feeds that are blocked by Cloudflare will
+     be automatically polled via `Dripfeed <https://dripfeed.app>`_ instead.
 
 
 Basic Models
@@ -140,4 +143,12 @@ There are two helper methods in the ``utils`` module to help manage subscription
 ``get_subscription_list_for_user`` will return all Subscriptions for a User where the
 parent is None.  ``get_unread_subscription_list_for_user`` will do the same but only returns
 Subscriptions that are unread or that have unread children if they are a folder.
+
+Cloudflare Busting
+------------------
+django-feed-reader has Dripfeed support built in.  If a feed becomes blocked by Cloudflare
+it can be polled via Dripfeed instead.  This requires a `Dripfeed <https://dripfeed.app>`_
+account and API key.
+
+
 

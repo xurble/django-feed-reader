@@ -29,6 +29,26 @@ Installation
    - Set ``FEEDS_SERVER`` to preferred web address of your service so that feed hosts can locate you if required e.g. ``https://example.com``
 - Setup a mechanism to periodically refresh the feeds (see below)
 
+Optional Settings
+^^^^^^^^^^^^^^^^^
+
+- ``FEEDS_VERIFY_HTTPS`` (Default True)
+   - Older versions of this library did not verify https connections when fetching feeds.
+     Set this to ``False`` to revert to the old behaviour.
+- ``KEEP_OLD_ENCLOSURES`` (Default False)
+   - Some feeds (particularly podcasts with Dynamic Ad Insertion) will change their enclosure
+     urls between reads.  By default, old enclosures are deleted and replaced with new ones.
+     Set this to true, to retain old enclosures - they will have their ``is_current`` flag
+     set to ``False``
+- ``SAVE_JSON`` (Default False)
+   - If set, Sources and Posts will store a JSON representation of the all the data retrieved
+     from the feed so that uncommon or custom attributes can be retrieved.  Caution - this will
+     dramatically increase tha amount of space used in your database.
+- ``DRIPFEED_KEY`` (Default None)
+   - If set to a valid Dripfeed API Key, then feeds that are blocked by Cloudflare will
+     be automatically polled via `Dripfeed <https://dripfeed.app>`_ instead.
+
+
 Basic Models
 ------------
 
@@ -124,6 +144,10 @@ There are two helper methods in the ``utils`` module to help manage subscription
 parent is None.  ``get_unread_subscription_list_for_user`` will do the same but only returns
 Subscriptions that are unread or that have unread children if they are a folder.
 
+Cloudflare Busting
+------------------
+django-feed-reader has Dripfeed support built in.  If a feed becomes blocked by Cloudflare
+it can be polled via Dripfeed instead.  This requires a `Dripfeed <https://dripfeed.app>`_
+account and API key.
 
-
-For more details see the `full documentation <https//django-feed-reader.readthedocs.io>`_.
+For more details see the `full documentation <https://django-feed-reader.readthedocs.io>`_.
