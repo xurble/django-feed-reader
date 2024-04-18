@@ -1,7 +1,7 @@
 import setuptools
 
 
-with open('readme.md', encoding='utf-8') as f:
+with open('readme.rst', encoding='utf-8') as f:
     long_description = f.read()
 
 
