@@ -160,7 +160,9 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
 
                 source_feed.feed_url = new_url
                 source_feed.last_result = "Moved"
-                source_feed.save(update_fields=["feed_url", "last_result"])
+                source_feed.status_code = ret.status_code
+                source_feed.save(update_fields=["feed_url", "last_result", "status_code"])
+                return  # don't go to the bottom handling, drop out here so we poll again on the next go around
 
             else:
                 source_feed.last_result = "Feed has moved but no location provided"
@@ -379,4 +381,4 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
                     parent._unread_count += folder._unread_count
                 groups.pop(folder.id)
 
-    return subs_list
+    return [s for s in subs_list if s.unread_count > 0 or s.is_river]  # Filter out folders with no undread items
