@@ -423,7 +423,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
                 for link in f.feed.links:
                     if 'rel' in link and link['rel'] == "next":
                         ret = requests.get(link['href'], headers=headers, verify=VERIFY_HTTPS, allow_redirects=True, timeout=20)
-                        (pok, pchanged) = parse_feed_xml(source_feed, ret.content)
+                        (pok, pchanged) = parse_feed_xml(source_feed, ret.content, output)
                         # print(link['href'])
                         # print((pok, pchanged))
                         f = parser.parse(ret.content)  # rebase the loop on this feed version
