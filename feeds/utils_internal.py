@@ -63,18 +63,18 @@ def get_agent(source_feed: Source):
 
 def fix_relative(html: str, url: str):
 
-    """ this is fucking cheesy """
+    """Rewrite relative and protocol-relative URLs in HTML to absolute URLs."""
     try:
         base = "/".join(url.split("/")[:3])
 
-        html = html.replace("src='//", "src='http://")
-        html = html.replace('src="//', 'src="http://')
+        html = html.replace("src='//", "src='https://")
+        html = html.replace('src="//', 'src="https://')
 
         html = html.replace("src='/", "src='%s/" % base)
         html = html.replace('src="/', 'src="%s/' % base)
 
-        html = html.replace("href='//", "href='http://")
-        html = html.replace('href="//', 'href="http://')
+        html = html.replace("href='//", "href='https://")
+        html = html.replace('href="//', 'href="https://')
 
         html = html.replace("href='/", "href='%s/" % base)
         html = html.replace('href="/', 'href="%s/' % base)
@@ -116,10 +116,29 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
     ok = False
     changed = False
 
+    if feed_body is None:
+        source_feed.last_result = "Empty feed response"
+        return (False, False)
+
+    if not isinstance(feed_body, (bytes, bytearray)):
+        source_feed.last_result = "Invalid feed body type"
+        return (False, False)
+
+    feed_body = bytes(feed_body)
+    if len(feed_body) == 0:
+        source_feed.last_result = "Empty feed response"
+        return (False, False)
+
+    try:
+        feed_text_for_json = feed_body.decode("utf-8")
+    except UnicodeDecodeError:
+        source_feed.last_result = "Feed body is not valid UTF-8"
+        return (False, False)
+
     if "xml" in content_type or feed_body[0:1] == b"<":
         (ok, changed) = parse_feed_xml(source_feed, feed_body, output)
     elif "json" in content_type or feed_body[0:1] == b"{":
-        (ok, changed) = parse_feed_json(source_feed, str(feed_body, "utf-8"), output)
+        (ok, changed) = parse_feed_json(source_feed, feed_text_for_json, output)
     else:
         ok = False
         source_feed.last_result = "Unknown Feed Type: " + content_type
@@ -300,7 +319,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
             try:
                 seen_files = []
 
-                post_files = e["enclosures"]
+                post_files = e.get("enclosures") or []
                 non_dupes = []
 
                 # find any files in media_content that aren't already declared as enclosures

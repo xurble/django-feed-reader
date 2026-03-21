@@ -104,3 +104,6 @@ venv.bak/
 .mypy_cache/
 *.out
 *.geany
+
+test.sqlite3
+todo.md

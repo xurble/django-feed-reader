@@ -16,6 +16,21 @@ from .base import BaseTest, NullOutput, BASE_URL
 @requests_mock.Mocker()
 class XMLFeedsTest(BaseTest):
 
+    def test_item_without_enclosures_list(self, mock):
+        """Entries without an enclosures key must not raise KeyError."""
+
+        self._populate_mock(mock, status=200, test_file="rss_single_item_no_enclosure.xml", content_type="application/rss+xml")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.posts.count(), 1)
+        self.assertEqual(src.posts.first().enclosures.count(), 0)
+
     def test_simple_xml(self, mock):
 
         self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")

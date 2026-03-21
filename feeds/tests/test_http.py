@@ -178,6 +178,64 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
         self.assertEqual(src.interval, 120)
 
+    def test_temp_redirect_rejects_unsafe_location(self, mock):
+
+        unsafe = "http://127.0.0.1/internal"
+        self._populate_mock(mock, status=302, test_file="empty_file.txt", content_type="text/plain", headers={"Location": unsafe})
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.posts.count(), 0)
+        self.assertEqual(src.feed_url, BASE_URL)
+
+    def test_perm_redirect_rejects_unsafe_location(self, mock):
+
+        unsafe = "http://127.0.0.1/internal"
+        self._populate_mock(mock, status=301, test_file="empty_file.txt", content_type="text/plain", headers={"Location": unsafe})
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.feed_url, BASE_URL)
+
+    def test_empty_response_body(self, mock):
+
+        ret_headers = {"Content-Type": "application/rss+xml", "etag": "e"}
+        mock.register_uri('GET', BASE_URL, status_code=200, content=b"", headers=ret_headers)
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.last_result, "Empty feed response")
+        self.assertEqual(src.posts.count(), 0)
+
+    def test_invalid_utf8_json_body(self, mock):
+
+        ret_headers = {"Content-Type": "application/json", "etag": "e"}
+        mock.register_uri('GET', BASE_URL, status_code=200, content=b"{\xff", headers=ret_headers)
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.last_result, "Feed body is not valid UTF-8")
+        self.assertEqual(src.posts.count(), 0)
+
     def test_temp_redirect(self, mock):
 
         new_url = "http://new.feed.com/"

@@ -22,6 +22,11 @@ class ExpiresGenerator(object):
         return django_utils.timezone.now() - datetime.timedelta(days=1)
 
 
+def default_due_poll():
+    """Timezone-aware distant past so new sources sort to the front of the poll queue."""
+    return datetime.datetime(1900, 1, 1, tzinfo=datetime.timezone.utc)
+
+
 class Source(models.Model):
     """This class represents a Feed to be read.
 
@@ -47,7 +52,7 @@ class Source(models.Model):
     last_polled = models.DateTimeField(blank=True, null=True)
     """**datetime** The last time the Feed was fetched"""
 
-    due_poll = models.DateTimeField(default=datetime.datetime(1900, 1, 1))  # default to distant past to put new sources to front of queue
+    due_poll = models.DateTimeField(default=default_due_poll)  # default to distant past to put new sources to front of queue
     """**datetime** When the Feed is next due to be fetched"""
 
     etag = models.CharField(max_length=255, blank=True, null=True)

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>No Enclosure Feed</title>
+    <link>http://example.com/</link>
+    <description>Test item without enclosures key issues</description>
+    <item>
+      <title>Plain post</title>
+      <link>http://example.com/item/1</link>
+      <guid isPermaLink="true">http://example.com/item/1</guid>
+      <description><![CDATA[<p>Hello</p>]]></description>
+    </item>
+  </channel>
+</rss>

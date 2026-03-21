@@ -1,14 +1,10 @@
-
-
 from django.conf import settings
+
+from feeds.url_safety import derive_default_feeds_server
 
 __all__ = []
 
-server = "Unknown Server"
-for h in settings.ALLOWED_HOSTS:
-    if "." in h:
-        server = "http://" + h
-        break
+server = derive_default_feeds_server(settings.ALLOWED_HOSTS)
 
 _DEFAULTS = {
     "FEEDS_USER_AGENT": "django-feed-reader",

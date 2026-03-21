@@ -1,9 +1,19 @@
 import requests_mock
 
-from feeds.models import Source
+from django.test import SimpleTestCase
+from django.utils import timezone
+
+from feeds.models import Source, default_due_poll
 from feeds.utils import read_feed
 
 from .base import BaseTest, NullOutput, BASE_URL
+
+
+class SourceDefaultDuePollTests(SimpleTestCase):
+
+    def test_default_due_poll_is_timezone_aware(self):
+        d = default_due_poll()
+        self.assertTrue(timezone.is_aware(d))
 
 
 @requests_mock.Mocker()

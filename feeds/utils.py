@@ -14,6 +14,10 @@ import requests
 
 from feeds.models import Source, Subscription
 
+from feeds.url_safety import (
+    is_safe_http_redirect_target,
+    resolve_feed_redirect_location,
+)
 from feeds.utils_internal import (
     get_agent,
     parse_feed,
@@ -149,18 +153,15 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
         new_url = ""
         try:
             if "Location" in ret.headers:
-                new_url = ret.headers["Location"]
-
-                if new_url[0] == "/":
-                    # find the domain from the feed
-
-                    base = "/".join(source_feed.feed_url.split("/")[:3])
-
-                    new_url = base + new_url
-
-                source_feed.feed_url = new_url
-                source_feed.last_result = "Moved"
-                source_feed.save(update_fields=["feed_url", "last_result"])
+                raw_location = ret.headers["Location"]
+                resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
+                if not resolved or not is_safe_http_redirect_target(resolved):
+                    source_feed.last_result = "Unsafe or invalid redirect URL"
+                else:
+                    new_url = resolved
+                    source_feed.feed_url = new_url
+                    source_feed.last_result = "Moved"
+                    source_feed.save(update_fields=["feed_url", "last_result"])
 
             else:
                 source_feed.last_result = "Feed has moved but no location provided"
@@ -172,40 +173,36 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
         new_url = ""
         was302 = True
         try:
-            new_url = ret.headers["Location"]
+            raw_location = ret.headers["Location"]
+            resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
+            if not resolved or not is_safe_http_redirect_target(resolved):
+                source_feed.last_result = "Unsafe or invalid redirect URL"
+                source_feed.interval += 60
+            else:
+                new_url = resolved
+                ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20, verify=VERIFY_HTTPS)
+                source_feed.status_code = ret.status_code
+                source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
 
-            if new_url[0] == "/":
-                # find the domain from the feed
-                start = source_feed.feed_url[:8]
-                end = source_feed.feed_url[8:]
-                if end.find("/") >= 0:
-                    end = end[:end.find("/")]
+                if source_feed.last_302_url == new_url:
+                    # this is where we 302'd to last time
+                    td = timezone.now() - source_feed.last_302_start
+                    if td.days > 60:
+                        source_feed.feed_url = new_url
+                        source_feed.last_302_url = " "
+                        source_feed.last_302_start = None
+                        source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
 
-                new_url = start + end + new_url
+                        source_feed.save(update_fields=["feed_url", "last_result", "last_302_url", "last_302_start"])
 
-            ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20, verify=VERIFY_HTTPS)
-            source_feed.status_code = ret.status_code
-            source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
-
-            if source_feed.last_302_url == new_url:
-                # this is where we 302'd to last time
-                td = timezone.now() - source_feed.last_302_start
-                if td.days > 60:
-                    source_feed.feed_url = new_url
-                    source_feed.last_302_url = " "
-                    source_feed.last_302_start = None
-                    source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
-
-                    source_feed.save(update_fields=["feed_url", "last_result", "last_302_url", "last_302_start"])
+                    else:
+                        source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
 
                 else:
+                    source_feed.last_302_url = new_url
+                    source_feed.last_302_start = timezone.now()
+
                     source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
-
-            else:
-                source_feed.last_302_url = new_url
-                source_feed.last_302_start = timezone.now()
-
-                source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
 
         except Exception as ex:
             source_feed.last_result = ("Failed Redirection to " + new_url + " " + str(ex))[:255]

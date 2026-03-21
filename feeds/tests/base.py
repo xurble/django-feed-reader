@@ -1,6 +1,6 @@
 import os
 
-from django.test import TestCase, TransactionTestCase
+from django.test import TransactionTestCase
 
 
 TEST_FILES_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testdata")

@@ -11,6 +11,7 @@ feeds/               # The Django app
   models.py          # Source, Post, Enclosure, Subscription
   utils.py           # Public API: read_feed, update_feeds, test_feed, subscription helpers
   utils_internal.py  # Internal: parsing (XML/JSON), sanitization, HTTP helpers
+  url_safety.py      # Redirect URL resolution / SSRF checks; default FEEDS_SERVER helper
   admin.py           # Django admin for all models
   tests/             # Test package, split by functional area
     base.py          # BaseTest, NullOutput, shared constants
@@ -20,6 +21,7 @@ feeds/               # The Django app
     test_xml_feeds.py      # RSS/Atom feed parsing
     test_json_feeds.py     # JSON Feed parsing
     test_http.py           # HTTP behavior (status codes, redirects, Cloudflare)
+    test_url_safety.py     # Redirect validation and default server URL derivation
   testdata/          # XML, JSON, HTML fixtures for tests
   management/commands/refreshfeeds.py
 tests/
@@ -75,3 +77,4 @@ Every code change must be accompanied by a unit test that demonstrates the chang
 - `update_fields` in `.save()` calls must match actual model field names (e.g. `name` not `title`, `image_url` not `icon`).
 - The `due_poll` field on `Source` uses a naive datetime default — be aware of timezone warnings with `USE_TZ = True`.
 - No `manage.py` exists; this is not a Django project, just a reusable app. Test settings are in `tests/settings.py`.
+- HTTP `Location` headers for 301/308/302/303/307 are resolved with `urllib.parse.urljoin` and validated (`feeds/url_safety.py`): only `http`/`https`, no loopback/private/multicast IPs, no `localhost` / `.local` hostnames, no `169.254.169.254`. Hostnames are not DNS-resolved (only literal IPs are checked).
