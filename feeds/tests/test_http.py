@@ -3,6 +3,7 @@ from importlib import reload
 
 from django.conf import settings
 from django.utils import timezone
+import requests
 import requests_mock
 
 from feeds.models import Source
@@ -40,6 +41,80 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.status_code, 304)
         self.assertEqual(src.interval, 70)
         self.assertTrue(src.live)
+
+    def test_304_clears_etag_when_last_change_stale(self, mock):
+
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/xml+rss")
+        self._populate_mock(mock, status=304, test_file="empty_file.txt", content_type="application/xml+rss", etag="an-etag")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+        self.assertEqual(src.etag, "an-etag")
+
+        Source.objects.filter(pk=src.pk).update(last_change=timezone.now() - timedelta(days=8))
+        src.refresh_from_db()
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 304)
+        self.assertEqual(src.last_result, "Clearing etag/last modified due to lack of changes")
+        self.assertIn(src.etag, (None, ""))
+
+    def test_fetch_network_error_records_failure(self, mock):
+
+        mock.register_uri("GET", BASE_URL, exc=requests.exceptions.ConnectTimeout("timed out"))
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 0)
+        self.assertTrue(src.last_result.startswith("Fetch error:"))
+
+    def test_http_400_disables_feed(self, mock):
+
+        self._populate_mock(mock, status=400, test_file="empty_file.txt", content_type="text/plain")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 400)
+        self.assertFalse(src.live)
+        self.assertIn("400", src.last_result)
+
+    def test_http_401_disables_feed(self, mock):
+
+        self._populate_mock(mock, status=401, test_file="empty_file.txt", content_type="text/plain")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 401)
+        self.assertFalse(src.live)
+
+    def test_http_429_disables_feed(self, mock):
+
+        self._populate_mock(mock, status=429, test_file="empty_file.txt", content_type="text/plain")
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 429)
+        self.assertFalse(src.live)
 
     def test_not_a_feed(self, mock):
 
@@ -235,6 +310,21 @@ class HTTPStuffTest(BaseTest):
 
         self.assertEqual(src.last_result, "Feed body is not valid UTF-8")
         self.assertEqual(src.posts.count(), 0)
+
+    def test_temp_redirect_relative_location(self, mock):
+
+        resolved = "http://feed.com/second.xml"
+        self._populate_mock(mock, status=302, test_file="empty_file.txt", content_type="text/plain", headers={"Location": "/second.xml"})
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/xml+rss", url=resolved)
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.posts.count(), 1)
 
     def test_temp_redirect(self, mock):
 

@@ -22,6 +22,8 @@ feeds/               # The Django app
     test_json_feeds.py     # JSON Feed parsing
     test_http.py           # HTTP behavior (status codes, redirects, Cloudflare)
     test_url_safety.py     # Redirect validation and default server URL derivation
+    test_management.py     # Management commands (refreshfeeds)
+    test_poll_utils.py     # update_feeds and test_feed helpers
   testdata/          # XML, JSON, HTML fixtures for tests
   management/commands/refreshfeeds.py
 tests/
@@ -61,6 +63,8 @@ Adding new optional parameters, fields, or functions is fine. Changing return ty
 ## Testing requirements
 
 Every code change must be accompanied by a unit test that demonstrates the change. Bug fixes need a test that fails before the fix and passes after. New features need tests covering the expected behavior. Tests go in the appropriate file under `feeds/tests/` and run with `pytest --reuse-db`.
+
+Do not `from feeds.utils import test_feed` inside test modules — pytest collects any imported name matching `test_*` as a test. Use `from feeds import utils as feeds_utils` and `feeds_utils.test_feed(...)`.
 
 ## Key conventions
 

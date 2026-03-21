@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Paged feed</title>
+  <link href="http://feed.com/atom.xml" rel="self"/>
+  <link href="http://feed.com/atom_paged_2.xml" rel="next"/>
+  <updated>2024-01-01T12:00:00Z</updated>
+  <entry>
+    <title>First page item</title>
+    <id>tag:example.org,2024:first</id>
+    <updated>2024-01-01T12:00:00Z</updated>
+    <content type="html">&lt;p&gt;One&lt;/p&gt;</content>
+  </entry>
+</feed>

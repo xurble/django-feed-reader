@@ -1,3 +1,4 @@
+import os
 from importlib import reload
 
 from django.conf import settings
@@ -10,11 +11,35 @@ from feeds.utils import read_feed
 from feeds import utils
 from feeds import utils_internal
 
-from .base import BaseTest, NullOutput, BASE_URL
+from .base import BaseTest, NullOutput, BASE_URL, TEST_FILES_FOLDER
 
 
 @requests_mock.Mocker()
 class XMLFeedsTest(BaseTest):
+
+    def test_atom_follows_rel_next_on_first_parse(self, mock):
+        """First full parse should follow atom:link[@rel='next'] and merge pages."""
+
+        self._populate_mock(mock, status=200, test_file="atom_paged_1.xml", content_type="application/atom+xml")
+        content2 = open(os.path.join(TEST_FILES_FOLDER, "atom_paged_2.xml"), "rb").read()
+        mock.register_uri(
+            "GET",
+            "http://feed.com/atom_paged_2.xml",
+            status_code=200,
+            content=content2,
+            headers={"Content-Type": "application/atom+xml", "etag": "page2"},
+        )
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 2)
+        titles = {p.title for p in src.posts.all()}
+        self.assertIn("First page item", titles)
+        self.assertIn("Second page item", titles)
 
     def test_item_without_enclosures_list(self, mock):
         """Entries without an enclosures key must not raise KeyError."""

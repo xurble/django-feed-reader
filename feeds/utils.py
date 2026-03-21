@@ -79,7 +79,7 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
     headers = {"User-Agent": agent}  # identify ourselves
 
     feed_url = source_feed.feed_url
-    if source_feed.is_cloudflare:  # Fuck you !
+    if source_feed.is_cloudflare:
         if source_feed.alt_url:
             feed_url = source_feed.alt_url
         else:
@@ -104,9 +104,7 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
 
-    if ret is None and source_feed.status_code == 1:  # er ??
-        pass
-    elif ret is None or source_feed.status_code == 0:
+    if ret is None or source_feed.status_code == 0:
         source_feed.interval += 120
     elif ret.status_code < 200 or ret.status_code >= 500:
         # errors, impossible return codes
@@ -144,7 +142,9 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
         source_feed.last_result = "Not modified"
         source_feed.last_success = timezone.now()
 
-        if source_feed.last_success and (timezone.now() - source_feed.last_success).days > 7:
+        # Clear stale validators if the feed has not delivered new content for a while
+        # (304 means unchanged; compare against last_change, not last_success set above).
+        if source_feed.last_change and (timezone.now() - source_feed.last_change).days > 7:
             source_feed.last_result = "Clearing etag/last modified due to lack of changes"
             source_feed.etag = None
             source_feed.last_modified = None
