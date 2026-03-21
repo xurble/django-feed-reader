@@ -1,3 +1,5 @@
+import hashlib
+
 import requests_mock
 
 from django.test import SimpleTestCase, TransactionTestCase
@@ -131,6 +133,37 @@ class PostIntegrityConstraintTests(TransactionTestCase):
         Post.objects.create(source=src, title="two", index=2, guid=None, body="body", created=timezone.now())
 
         self.assertEqual(Post.objects.filter(source=src, guid__isnull=True).count(), 2)
+
+    def test_guid_digest_matches_sha256_of_guid(self):
+        src = self._source()
+        guid = "some-feed-guid"
+        p = Post.objects.create(
+            source=src,
+            title="t",
+            index=1,
+            guid=guid,
+            body="body",
+            created=timezone.now(),
+        )
+        expected = hashlib.sha256(guid.encode("utf-8")).hexdigest()
+        self.assertEqual(p.guid_digest, expected)
+        p.refresh_from_db()
+        self.assertEqual(p.guid_digest, expected)
+
+    def test_partial_save_persists_guid_digest(self):
+        src = self._source()
+        p = Post.objects.create(
+            source=src,
+            title="t",
+            index=1,
+            guid="g1",
+            body="body",
+            created=timezone.now(),
+        )
+        p.title = "updated"
+        p.save(update_fields=["title"])
+        p.refresh_from_db()
+        self.assertEqual(p.guid_digest, hashlib.sha256(b"g1").hexdigest())
 
 
 class EnclosureMediaTypeTests(TransactionTestCase):

@@ -323,7 +323,11 @@ def get_subscription_list_for_user(user) -> List[Subscription]:
     :rtype: List[Subscription]
     """
 
-    subs_list = list(Subscription.objects.filter(Q(user=user) & Q(parent=None)).order_by("-is_river", "name"))
+    subs_list = list(
+        Subscription.objects.filter(Q(user=user) & Q(parent=None))
+        .select_related("source")
+        .order_by("-is_river", "name")
+    )
 
     return subs_list
 
@@ -338,7 +342,14 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
     :rtype: List[Subscription]
     """
 
-    to_read = list(Subscription.objects.filter(Q(user=user) & (Q(source=None) | Q(is_river=True) | Q(last_read__lt=F('source__max_index')))).order_by("-is_river", "name"))
+    to_read = list(
+        Subscription.objects.filter(
+            Q(user=user)
+            & (Q(source=None) | Q(is_river=True) | Q(last_read__lt=F("source__max_index")))
+        )
+        .select_related("source")
+        .order_by("-is_river", "name")
+    )
 
     subs_list = []
     groups = {}

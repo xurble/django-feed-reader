@@ -6,7 +6,6 @@ import logging
 import time
 from typing import TextIO
 
-from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 import requests
@@ -35,6 +34,167 @@ if hasattr(settings, "FEEDS_USER_AGENT"):
 
 
 logger = logging.getLogger(__file__)
+
+
+def _posts_by_guid_lookup(source_feed: Source) -> dict:
+    """Load posts for this source keyed by guid (one query + enclosure prefetch)."""
+    posts_by_guid = {}
+    for p in Post.objects.filter(source=source_feed).prefetch_related("enclosures"):
+        if p.guid is not None:
+            posts_by_guid[p.guid] = p
+    return posts_by_guid
+
+
+def _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields):
+    """Apply enclosure deletes, updates, and creates with minimal round-trips."""
+    if delete_ids:
+        Enclosure.objects.filter(pk__in=delete_ids).delete()
+    if to_update:
+        Enclosure.objects.bulk_update(to_update, update_fields)
+    if to_create:
+        Enclosure.objects.bulk_create(to_create)
+
+
+def _batch_sync_enclosures_xml(p: Post, e):
+    """Match feedparser entry enclosures to DB; batch update/create/delete."""
+    seen_files = []
+    post_files = e.get("enclosures") or []
+    non_dupes = []
+
+    if "media_content" in e:
+        for ee in e["media_content"]:
+            if len(e["media_content"]) == 1 and len(e.get("content", [])) == 1:
+                ee["description"] = e["content"][0].get("value")
+
+            found = False
+            for ff in post_files:
+                if ff["href"] == ee["url"]:
+                    found = True
+                    break
+            if not found:
+                non_dupes.append(ee)
+
+        post_files += non_dupes
+
+    to_update = []
+    delete_ids = []
+    to_create = []
+
+    for ee in list(p.enclosures.all()):
+        found_enclosure = False
+        for pe in post_files:
+            href = "href" if "href" in pe else "url"
+            length_key = "length" if "length" in pe else "filesize"
+
+            if pe[href] == ee.href and ee.href not in seen_files:
+                found_enclosure = True
+                try:
+                    ee.length = int(pe[length_key])
+                except Exception:
+                    ee.length = 0
+                try:
+                    ee.type = pe["type"]
+                except Exception:
+                    ee.type = "unknown"
+                if "medium" in pe:
+                    ee.medium = pe["medium"]
+                if "description" in pe:
+                    ee.description = pe["description"][:512]
+                to_update.append(ee)
+                break
+        if not found_enclosure:
+            if KEEP_OLD_ENCLOSURES:
+                ee.is_current = False
+                to_update.append(ee)
+            else:
+                delete_ids.append(ee.pk)
+        seen_files.append(ee.href)
+
+    for pe in post_files:
+        href = "href" if "href" in pe else "url"
+        length_key = "length" if "length" in pe else "filesize"
+        try:
+            if pe[href] not in seen_files:
+                try:
+                    blen = int(pe[length_key])
+                except Exception:
+                    blen = 0
+                try:
+                    typ = pe["type"]
+                except Exception:
+                    typ = "audio/mpeg"
+                ne = Enclosure(post=p, href=pe[href], length=blen, type=typ)
+                if "medium" in pe:
+                    ne.medium = pe["medium"]
+                if "description" in pe:
+                    ne.description = pe["description"][:512]
+                to_create.append(ne)
+        except Exception:
+            pass
+
+    _commit_enclosure_batch(
+        delete_ids,
+        to_update,
+        to_create,
+        ["length", "type", "medium", "description", "is_current"],
+    )
+
+
+def _batch_sync_enclosures_json(p: Post, e):
+    """Match JSON feed item attachments to DB; batch update/create/delete."""
+    seen_files = []
+    to_update = []
+    delete_ids = []
+    to_create = []
+
+    for ee in list(p.enclosures.all()):
+        found_enclosure = False
+        if "attachments" in e:
+            for pe in e["attachments"]:
+                if pe["url"] == ee.href and ee.href not in seen_files:
+                    found_enclosure = True
+                    try:
+                        ee.length = int(pe["size_in_bytes"])
+                    except Exception:
+                        ee.length = 0
+                    try:
+                        ee.type = pe["mime_type"]
+                    except Exception:
+                        ee.type = "audio/mpeg"
+                    to_update.append(ee)
+                    break
+        if not found_enclosure:
+            if KEEP_OLD_ENCLOSURES:
+                ee.is_current = False
+                to_update.append(ee)
+            else:
+                delete_ids.append(ee.pk)
+        seen_files.append(ee.href)
+
+    if "attachments" in e:
+        for pe in e["attachments"]:
+            try:
+                if pe["url"] not in seen_files:
+                    try:
+                        blen = int(pe["size_in_bytes"])
+                    except Exception:
+                        blen = 0
+                    try:
+                        typ = pe["mime_type"]
+                    except Exception:
+                        typ = "audio/mpeg"
+                    to_create.append(
+                        Enclosure(post=p, href=pe["url"], length=blen, type=typ)
+                    )
+            except Exception:
+                pass
+
+    _commit_enclosure_batch(
+        delete_ids,
+        to_update,
+        to_create,
+        ["length", "type", "is_current"],
+    )
 
 
 def _customize_sanitizer(fp):
@@ -147,15 +307,14 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
         source_feed.last_result = " OK (updated)"  # and temporary redirects
         source_feed.last_change = timezone.now()
 
-        idx = source_feed.max_index
-        # give indices to posts based on created date
-        posts = Post.objects.filter(Q(source=source_feed) & Q(index=0)).order_by("created")
-        for p in posts:
-            idx += 1
-            p.index = idx
-            p.save(update_fields=["index"])
-
-        source_feed.max_index = idx
+        # Assign indices in one round-trip (avoid per-post save + signal overhead).
+        posts = list(Post.objects.filter(source=source_feed, index=0).order_by("created"))
+        if posts:
+            start = source_feed.max_index
+            for i, p in enumerate(posts, start=1):
+                p.index = start + i
+            Post.objects.bulk_update(posts, ["index"])
+            source_feed.max_index = start + len(posts)
 
     return (ok, changed)
 
@@ -165,10 +324,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
     ok = True
     changed = False
 
-    if source_feed.posts.all().count() == 0:
-        is_first = True
-    else:
-        is_first = False
+    is_first = not source_feed.posts.exists()
 
     # output.write(ret.content)
     try:
@@ -228,6 +384,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
 
         # output.write(entries)
         entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
+        posts_by_guid = _posts_by_guid_lookup(source_feed)
         for e in entries:
             # we are going to take the longest
             body = ""
@@ -258,11 +415,10 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
             e_guid = getattr(e, 'guid', None)
             e_link = getattr(e, 'link', None)
             guid = make_guid(e_guid, e_link, body)
-            try:
-                p = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
+            p = posts_by_guid.get(guid)
+            if p is not None:
                 output.write("\nEXISTING " + guid)
-
-            except Exception:
+            else:
                 output.write("\nNEW " + guid)
                 p = Post(index=0, body=" ", title="", guid=guid)
                 p.found = timezone.now()
@@ -278,149 +434,42 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
                         p.created = timezone.now()
 
                 p.source = source_feed
-                p.save()
 
             if SAVE_JSON:
                 p.json = e
-                p.save(update_fields=["json"])
 
             try:
                 p.title = e.title
-                p.save(update_fields=["title"])
             except Exception as ex:
                 output.write("\nTitle error:" + str(ex))
 
             try:
                 p.link = e.link
-                p.save(update_fields=["link"])
             except Exception as ex:
                 output.write("\nLink error:" + str(ex))
 
             try:
                 p.image_url = e.image.href
-                p.save(update_fields=["image_url"])
             except Exception:
                 pass
 
             try:
                 p.author = e.author
-                p.save(update_fields=["author"])
             except Exception:
                 p.author = ""
 
             try:
                 p.body = body
-                p.save(update_fields=["body"])
                 # output.write(p.body)
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
 
+            p.save()
+            posts_by_guid[guid] = p
+
             try:
-                seen_files = []
-
-                post_files = e.get("enclosures") or []
-                non_dupes = []
-
-                # find any files in media_content that aren't already declared as enclosures
-                if "media_content" in e:
-                    for ee in e["media_content"]:
-
-                        # try and find a description for this.
-                        # The way the feedparser works makes this difficult
-                        # because it should be a child of ee but it isn't
-                        # so while, I don't think this is right, it works most of the time
-                        if len(e["media_content"]) == 1 and len(e.get("content", [])) == 1:
-                            ee["description"] = e["content"][0].get("value")
-
-                        found = False
-                        for ff in post_files:
-                            if ff["href"] == ee["url"]:
-                                found = True
-                                break
-                        if not found:
-                            non_dupes.append(ee)
-
-                    post_files += non_dupes
-
-                for ee in list(p.enclosures.all()):
-                    # check existing enclosure is still there
-                    found_enclosure = False
-                    for pe in post_files:
-
-                        href = "href"
-                        if href not in pe:
-                            href = "url"
-
-                        length = "length"
-                        if length not in pe:
-                            length = "filesize"
-
-                        if pe[href] == ee.href and ee.href not in seen_files:
-                            found_enclosure = True
-
-                            try:
-                                ee.length = int(pe[length])
-                            except Exception:
-                                ee.length = 0
-
-                            try:
-                                type = pe["type"]
-                            except Exception:
-                                type = "unknown"
-
-                            ee.type = type
-
-                            if "medium" in pe:
-                                ee.medium = pe["medium"]
-
-                            if "description" in pe:
-                                ee.description = pe["description"][:512]
-
-                            ee.save()
-                            break
-                    if not found_enclosure:
-                        if KEEP_OLD_ENCLOSURES:
-                            ee.is_current = False
-                            ee.save()
-                        else:
-                            ee.delete()
-                    seen_files.append(ee.href)
-
-                for pe in post_files:
-
-                    href = "href"
-                    if href not in pe:
-                        href = "url"
-
-                    length = "length"
-                    if length not in pe:
-                        length = "filesize"
-
-                    try:
-                        if pe[href] not in seen_files:
-
-                            try:
-                                length = int(pe[length])
-                            except Exception:
-                                length = 0
-
-                            try:
-                                type = pe["type"]
-                            except Exception:
-                                type = "audio/mpeg"
-
-                            ee = Enclosure(post=p, href=pe[href], length=length, type=type)
-
-                            if "medium" in pe:
-                                ee.medium = pe["medium"]
-
-                            if "description" in pe:
-                                ee.description = pe["description"][:512]
-
-                            ee.save()
-                    except Exception:
-                        pass
+                _batch_sync_enclosures_xml(p, e)
             except Exception as ex:
                 output.write("\nNo enclosures - " + str(ex))
 
@@ -430,7 +479,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
             source_feed.json = f
             source_feed.save(update_fields=["json"])
 
-    if is_first and source_feed.posts.all().count() > 0:
+    if is_first and source_feed.posts.exists():
         # If this is the first time we have parsed this
         # then see if it's paginated and go back through its history
         agent = get_agent(source_feed)
@@ -518,6 +567,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
 
         # output.write(entries)
         entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
+        posts_by_guid = _posts_by_guid_lookup(source_feed)
         for e in entries:
             body = " "
             if "content_text" in e:
@@ -531,11 +581,10 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             e_url = e.get("url", None)
             guid = make_guid(e_id, e_url, body)
 
-            try:
-                p = Post.objects.filter(source=source_feed).filter(guid=guid)[0]
+            p = posts_by_guid.get(guid)
+            if p is not None:
                 output.write("\nEXISTING " + guid)
-
-            except Exception:
+            else:
                 output.write("\nNEW " + guid)
                 p = Post(index=0, body=' ')
                 p.found = timezone.now()
@@ -582,70 +631,20 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             if SAVE_JSON:
                 p.json = e
 
-            p.save()
-
-            try:
-                seen_files = []
-                for ee in list(p.enclosures.all()):
-                    # check existing enclosure is still there
-                    found_enclosure = False
-                    if "attachments" in e:
-                        for pe in e["attachments"]:
-
-                            if pe["url"] == ee.href and ee.href not in seen_files:
-                                found_enclosure = True
-
-                                try:
-                                    ee.length = int(pe["size_in_bytes"])
-                                except Exception:
-                                    ee.length = 0
-
-                                try:
-                                    type = pe["mime_type"]
-                                except Exception:
-                                    type = "audio/mpeg"  # we are assuming podcasts here but that's probably not safe
-
-                                ee.type = type
-                                ee.save()
-                                break
-                    if not found_enclosure:
-                        if KEEP_OLD_ENCLOSURES:
-                            ee.is_current = False
-                            ee.save()
-                        else:
-                            ee.delete()
-                    seen_files.append(ee.href)
-
-                if "attachments" in e:
-                    for pe in e["attachments"]:
-
-                        try:
-                            if pe["url"] not in seen_files:
-
-                                try:
-                                    length = int(pe["size_in_bytes"])
-                                except Exception:
-                                    length = 0
-
-                                try:
-                                    type = pe["mime_type"]
-                                except Exception:
-                                    type = "audio/mpeg"
-
-                                ee = Enclosure(post=p, href=pe["url"], length=length, type=type)
-                                ee.save()
-                        except Exception:
-                            pass
-            except Exception as ex:
-                output.write("\nNo enclosures - " + str(ex))
-
             try:
                 p.body = body
-                p.save()
                 # output.write(p.body)
             except Exception as ex:
                 output.write(str(ex))
                 output.write(p.body)
+
+            p.save()
+            posts_by_guid[guid] = p
+
+            try:
+                _batch_sync_enclosures_json(p, e)
+            except Exception as ex:
+                output.write("\nNo enclosures - " + str(ex))
 
         if SAVE_JSON:
             f['items'] = []

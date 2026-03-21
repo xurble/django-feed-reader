@@ -1,5 +1,6 @@
-
 import datetime
+import hashlib
+from collections import defaultdict
 from urllib.parse import urlencode
 import logging
 
@@ -249,6 +250,10 @@ class Source(models.Model):
                 name="feeds_source_unique_feed_url",
             ),
         ]
+        indexes = [
+            # update_feeds: filter(live=True, due_poll__lt=now).order_by("due_poll")
+            models.Index(fields=["live", "due_poll"], name="feeds_source_live_due_poll_idx"),
+        ]
 
 
 class Post(models.Model):
@@ -279,6 +284,9 @@ class Post(models.Model):
 
     guid = models.CharField(max_length=GUID_MAX_LENGTH, blank=True, null=True, db_index=True)
     """**str** The unique ID for this post"""
+
+    # SHA-256 hex of guid; used for DB uniqueness (MySQL index length limit on long guids).
+    guid_digest = models.CharField(max_length=64, null=True, blank=True, editable=False)
 
     author = models.CharField(max_length=255, blank=True, null=True)
     """**str** Name of the author of this post as reported by the feed"""
@@ -330,15 +338,25 @@ class Post(models.Model):
 
     class Meta:
         ordering = ["index"]
+        # Uniqueness on (source, guid_digest): MySQL cannot index 768-char utf8mb4 guids in
+        # a composite unique key (1071 max key length). Digest is updated in save().
+        # Multiple rows with guid NULL => guid_digest NULL are allowed (SQL NULL semantics).
         constraints = [
             models.UniqueConstraint(
-                fields=["source", "guid"],
-                condition=Q(guid__isnull=False),
+                fields=["source", "guid_digest"],
                 name="feeds_post_unique_source_guid_when_guid_present",
             ),
         ]
 
     def save(self, *args, **kwargs):
+        if self.guid is None:
+            self.guid_digest = None
+        else:
+            self.guid_digest = hashlib.sha256(self.guid.encode("utf-8")).hexdigest()
+        # Partial saves must still persist guid_digest (unique key) if guid is set.
+        uf = kwargs.get("update_fields")
+        if uf is not None:
+            kwargs["update_fields"] = list(dict.fromkeys(list(uf) + ["guid_digest"]))
         if self.index is None:
             self.index = self.source.max_index + 1
             self.source.max_index = self.index
@@ -435,15 +453,24 @@ class Subscription(models.Model):
         """
         if self.source:
             return self.source.max_index - self.last_read
-        else:
-            if not hasattr(self, "_unread_count"):
-                self._unread_count = 0
-                for child in Subscription.objects.filter(parent=self):
-                    self._unread_count += child.unread_count
-
+        if hasattr(self, "_unread_count"):
             return self._unread_count
+        # One query for the whole user tree instead of one query per folder level.
+        by_parent = _subscription_children_by_parent(self.user_id)
+        total = 0
+        stack = list(by_parent.get(self.id, []))
+        while stack:
+            sub = stack.pop()
+            if sub.source_id:
+                total += sub.source.max_index - sub.last_read
+            stack.extend(by_parent.get(sub.id, []))
+        self._unread_count = total
+        return self._unread_count
 
-    def _gather_posts(self, post_list):
+    def _gather_posts(self, post_list, children_by_parent=None):
+
+        if children_by_parent is None:
+            children_by_parent = _subscription_children_by_parent(self.user_id)
 
         if self.source:
             posts = list(Post.objects.filter(Q(source=self.source) & Q(index__gt=self.last_read)))
@@ -451,8 +478,8 @@ class Subscription(models.Model):
                 post.from_subscription = self
                 post_list.append(post)
 
-        for child in Subscription.objects.filter(parent=self):
-            child._gather_posts(post_list)
+        for child in children_by_parent.get(self.id, []):
+            child._gather_posts(post_list, children_by_parent)
 
     def get_unread_posts(self, oldest_first=True):
         """ Returns all the unread posts in a subscription"""
@@ -461,12 +488,15 @@ class Subscription(models.Model):
         posts.sort(reverse=(not oldest_first), key=lambda post: post.created)  # Sort in ascending order
         return posts
 
-    def _gather_sources(self, source_list: dict):
+    def _gather_sources(self, source_list: dict, children_by_parent=None):
+        if children_by_parent is None:
+            children_by_parent = _subscription_children_by_parent(self.user_id)
+
         if self.source:
             source_list[self.source.id] = self
 
-        for child in Subscription.objects.filter(parent=self):
-            child._gather_sources(source_list)
+        for child in children_by_parent.get(self.id, []):
+            child._gather_sources(source_list, children_by_parent)
 
     def get_paginated_posts(self, page: int, oldest_first: bool =True, posts_per_page: int = 20):
         """Get a posts from the feed a page at a time
@@ -507,20 +537,39 @@ class Subscription(models.Model):
         """
         if self.source:
             self.last_read = self.source.max_index
-            self.save()
-        else:
-            # I am a folder
-            for child in Subscription.objects.filter(parent=self):
-                child.mark_read()
+            self.save(update_fields=["last_read"])
+            return
+        by_parent = _subscription_children_by_parent(self.user_id)
+        stack = list(by_parent.get(self.id, []))
+        to_update = []
+        while stack:
+            sub = stack.pop()
+            if sub.source_id and sub.last_read != sub.source.max_index:
+                sub.last_read = sub.source.max_index
+                to_update.append(sub)
+            stack.extend(by_parent.get(sub.id, []))
+        if to_update:
+            Subscription.objects.bulk_update(to_update, ["last_read"])
 
     class Meta:
+        # Unconditional unique: see Post.Meta.constraints — MySQL-compatible.
         constraints = [
             models.UniqueConstraint(
                 fields=["user", "source"],
-                condition=Q(source__isnull=False),
                 name="feeds_subscription_unique_user_source_when_source_present",
             ),
         ]
+        indexes = [
+            models.Index(fields=["user", "parent"], name="feeds_sub_user_parent_idx"),
+        ]
+
+
+def _subscription_children_by_parent(user_id):
+    """All subscriptions for user grouped by parent_id (single query)."""
+    by_parent = defaultdict(list)
+    for sub in Subscription.objects.filter(user_id=user_id).select_related("source"):
+        by_parent[sub.parent_id].append(sub)
+    return by_parent
 
 
 @receiver(post_delete)
