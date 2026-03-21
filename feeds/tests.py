@@ -108,7 +108,7 @@ class SubscriptionsTest(BaseTest):
         self.assertEqual(src.subscriber_count, 1)
 
         # First subscriber keeps num_subs at 1
-        user = User(email='x@example.com')
+        user = User(username='user1', email='x@example.com')
         user.save()
         sub = Subscription(user=user, source=src)
         sub.save()
@@ -116,7 +116,7 @@ class SubscriptionsTest(BaseTest):
         self.assertEqual(src.subscriber_count, 1)
 
         # Second subscriber ups it to 2
-        user2 = User(email='y@example.com')
+        user2 = User(username='user2', email='y@example.com')
         user2.save()
         sub2 = Subscription(user=user2, source=src)
         sub2.save()

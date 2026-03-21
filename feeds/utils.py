@@ -160,9 +160,7 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
 
                 source_feed.feed_url = new_url
                 source_feed.last_result = "Moved"
-                source_feed.status_code = ret.status_code
-                source_feed.save(update_fields=["feed_url", "last_result", "status_code"])
-                return  # don't go to the bottom handling, drop out here so we poll again on the next go around
+                source_feed.save(update_fields=["feed_url", "last_result"])
 
             else:
                 source_feed.last_result = "Feed has moved but no location provided"

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <title>kottke.org</title>
+    <link rel="alternate" type="text/html" href="http://kottke.org/" />
+    <link rel="self" type="application/atom+xml" href="http://feeds.kottke.org/main" />
+    <id>tag:kottke.org,2009-08-11:05118</id>
+    <updated>2024-04-26T21:19:40Z</updated>
+    <subtitle>Jason Kottke’s weblog, home of fine hypertext products since 1998</subtitle>
+
+    <generator uri="http://www.sixapart.com/movabletype/">Movable Type 4.2</generator>
+
+
+
+<entry>
+    <title type="html"><![CDATA[ Yo-Yo Ma Performs Bach in Alaska for Earth Day ]]></title>
+    <link rel="alternate" type="text/html" href="https://kottke.org/24/04/yo-yo-ma-performs-bach-in-alaska-for-earth-day" />
+    <id>tag:kottke.org,2024://5.44497</id>
+
+    <published>2024-04-26T21:19:40Z</published>
+    <updated>2024-04-26T21:19:40Z</updated>
+
+    <author>
+        <name>Jason Kottke</name>
+        <uri>http://www.kottke.org</uri>
+    </author>
+    <content type="html" xml:lang="en" xml:base="https://kottke.org/">
+        <![CDATA[<p><iframe loading="lazy" width="560" height="315" src="https://www.youtube.com/embed/8VHNWAhvdNE" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></p>
+
+<p>This is a nice thing to end the week on: Yo-Yo Ma playing &#8220;Bach&#8217;s Prélude from Suite No. 2, amidst the melting permafrost on Lower Tanana Dene lands in Fairbanks, Alaska.&#8221; He was brought to this birch forest by <a href="https://www.instagram.com/daazhraii/">Princess Daazhraii Johnson</a>, a member of the <a href="https://gwichincouncil.com/gwichin">Neets&#8217;aii Gwich&#8217;in</a> people, who wrote:</p>
+
+<blockquote><p>Our relationship to our birch relatives, our salmon relatives, and all the beings of Alaska are sacred. Our traditional stories tell us that at one point we all spoke the same language &#8230; we still do. If we find the time to truly listen, we might recognize ourselves in the melting permafrost or the fallen birch, but we might also recognize ourselves in the songs of the birds or the freshness of the Arctic breeze. There is still hope when we experience life. We should all fall in love with the places we live and let this love drive our determination to protect the waters, the salmon, the caribou, and all our plant relatives so that future generations may also experience such joy and sustenance.</p></blockquote>
+
+<p>Have a good weekend, everyone.</p>]]>
+
+
+
+        <![CDATA[ <p><strong>Tags:</strong> <a href="https://kottke.org/tag/Alaska">Alaska</a> · <a href="https://kottke.org/tag/Johann%20Sebastian%20Bach">Johann Sebastian Bach</a> · <a href="https://kottke.org/tag/music">music</a> · <a href="https://kottke.org/tag/Princess%20Daazhraii%20Johnson">Princess Daazhraii Johnson</a> · <a href="https://kottke.org/tag/Yo-Yo%20Ma">Yo-Yo Ma</a></p>]]>
+
+        <![CDATA[ <p>💬 <a href="https://kottke.org/24/04/yo-yo-ma-performs-bach-in-alaska-for-earth-day">Join the discussion on kottke.org</a> →</p>]]>
+
+    </content>
+</entry>
+
+
+</feed>
