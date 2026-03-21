@@ -1,12 +1,17 @@
 import requests_mock
 
 from django.test import SimpleTestCase, TransactionTestCase
+from django.db import IntegrityError, transaction
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from feeds.models import Source, Post, Enclosure, default_due_poll
+from feeds.models import Source, Post, Enclosure, Subscription, default_due_poll
 from feeds.utils import read_feed
 
 from .base import BaseTest, NullOutput, BASE_URL
+
+
+User = get_user_model()
 
 
 class SourceDefaultDuePollTests(SimpleTestCase):
@@ -73,6 +78,61 @@ class SourceDisplayPropertiesTests(TransactionTestCase):
         self.assertIn("00", s.health_box)
 
 
+class SourceIntegrityConstraintTests(TransactionTestCase):
+
+    def test_feed_url_must_be_unique(self):
+        Source.objects.create(name="one", feed_url="http://example.com/feed.xml", interval=0)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Source.objects.create(name="two", feed_url="http://example.com/feed.xml", interval=0)
+
+
+class PostIntegrityConstraintTests(TransactionTestCase):
+
+    def _source(self, suffix="1"):
+        return Source.objects.create(name=f"s{suffix}", feed_url=f"http://example.com/{suffix}.xml", interval=0)
+
+    def test_guid_must_be_unique_per_source_when_present(self):
+        src = self._source()
+        Post.objects.create(
+            source=src,
+            title="one",
+            index=1,
+            guid="same-guid",
+            body="body",
+            created=timezone.now(),
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Post.objects.create(
+                    source=src,
+                    title="two",
+                    index=2,
+                    guid="same-guid",
+                    body="body",
+                    created=timezone.now(),
+                )
+
+    def test_same_guid_can_exist_on_different_sources(self):
+        src1 = self._source("a")
+        src2 = self._source("b")
+        guid = "same-guid"
+
+        Post.objects.create(source=src1, title="one", index=1, guid=guid, body="body", created=timezone.now())
+        Post.objects.create(source=src2, title="two", index=1, guid=guid, body="body", created=timezone.now())
+
+        self.assertEqual(Post.objects.filter(guid=guid).count(), 2)
+
+    def test_multiple_null_guids_are_allowed(self):
+        src = self._source()
+        Post.objects.create(source=src, title="one", index=1, guid=None, body="body", created=timezone.now())
+        Post.objects.create(source=src, title="two", index=2, guid=None, body="body", created=timezone.now())
+
+        self.assertEqual(Post.objects.filter(source=src, guid__isnull=True).count(), 2)
+
+
 class EnclosureMediaTypeTests(TransactionTestCase):
 
     def _post(self):
@@ -107,6 +167,38 @@ class EnclosureMediaTypeTests(TransactionTestCase):
     def test_medium_field_overrides_mime_prefix(self):
         e = Enclosure(post=self._post(), href="http://x.com/x", type="application/octet-stream", medium="image")
         self.assertTrue(e.is_image)
+
+
+class SubscriptionIntegrityConstraintTests(TransactionTestCase):
+
+    def _user(self, suffix="1"):
+        return User.objects.create(username=f"user-{suffix}")
+
+    def _source(self, suffix="1"):
+        return Source.objects.create(name=f"s{suffix}", feed_url=f"http://example.com/feed-{suffix}.xml", interval=0)
+
+    def test_user_cannot_subscribe_to_same_source_twice(self):
+        user = self._user()
+        src = self._source()
+        Subscription.objects.create(user=user, source=src, name="First")
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Subscription.objects.create(user=user, source=src, name="Second")
+
+    def test_same_user_can_have_multiple_folder_subscriptions(self):
+        user = self._user()
+        Subscription.objects.create(user=user, source=None, name="Folder A")
+        Subscription.objects.create(user=user, source=None, name="Folder B")
+
+        self.assertEqual(Subscription.objects.filter(user=user, source__isnull=True).count(), 2)
+
+    def test_different_users_can_subscribe_to_same_source(self):
+        src = self._source()
+        Subscription.objects.create(user=self._user("a"), source=src, name="A")
+        Subscription.objects.create(user=self._user("b"), source=src, name="B")
+
+        self.assertEqual(Subscription.objects.filter(source=src).count(), 2)
 
 
 @requests_mock.Mocker()

@@ -242,6 +242,14 @@ class Source(models.Model):
 
     """Will this appear in the docs?"""
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["feed_url"],
+                name="feeds_source_unique_feed_url",
+            ),
+        ]
+
 
 class Post(models.Model):
     """An entry in a feed
@@ -322,6 +330,13 @@ class Post(models.Model):
 
     class Meta:
         ordering = ["index"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "guid"],
+                condition=Q(guid__isnull=False),
+                name="feeds_post_unique_source_guid_when_guid_present",
+            ),
+        ]
 
     def save(self, *args, **kwargs):
         if self.index is None:
@@ -497,6 +512,15 @@ class Subscription(models.Model):
             # I am a folder
             for child in Subscription.objects.filter(parent=self):
                 child.mark_read()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "source"],
+                condition=Q(source__isnull=False),
+                name="feeds_subscription_unique_user_source_when_source_present",
+            ),
+        ]
 
 
 @receiver(post_delete)

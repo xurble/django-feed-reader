@@ -17,15 +17,20 @@ from .base import BaseTest, NullOutput, BASE_URL
 User = get_user_model()
 
 
+def feed_url_for(label):
+    return f"http://feed.com/{label}/"
+
+
 @requests_mock.Mocker()
 class SubscriptionsTest(BaseTest):
 
     def test_single_user(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        feed_url = feed_url_for("single-user")
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src = Source(name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls)
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
@@ -47,7 +52,7 @@ class SubscriptionsTest(BaseTest):
     def test_subscriber_count(self, mock):
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src = Source(name="test1", feed_url=feed_url_for("subscriber-count"), interval=0, last_success=ls, last_change=ls)
         src.save()
         src.refresh_from_db()
         # If we don't use Subscriptions then the default is 1
@@ -81,10 +86,11 @@ class SubscriptionsTest(BaseTest):
 
     def test_basic_subscription(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        feed_url = feed_url_for("basic-subscription")
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src = Source(name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls)
         src.save()
 
         user = User(email='x@example.com')
@@ -111,7 +117,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"sub-list-1-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -129,7 +135,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"sub-list-2-root-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -141,7 +147,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="folder_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="folder_test{i}".format(i=i), feed_url=feed_url_for(f"sub-list-2-folder-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -162,7 +168,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"basic-read-root-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.last_read
             src.save()
@@ -175,7 +181,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="folder_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="folder_test{i}".format(i=i), feed_url=feed_url_for(f"basic-read-folder-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -214,7 +220,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"nested-root-{i}"), interval=0, last_success=ls, last_change=ls)
             src.save()
 
             for j in range(3):
@@ -229,7 +235,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder1_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="folder1_test{i}".format(i=i), feed_url=feed_url_for(f"nested-folder1-{i}"), interval=0, last_success=ls, last_change=ls)
             src.save()
 
             for j in range(3):
@@ -246,7 +252,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder2_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="folder2_test{i}".format(i=i), feed_url=feed_url_for(f"nested-folder2-{i}"), interval=0, last_success=ls, last_change=ls)
             src.save()
 
             for j in range(3):
@@ -284,10 +290,11 @@ class SubscriptionsTest(BaseTest):
 
     def test_get_unread(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        feed_url = feed_url_for("get-unread")
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src = Source(name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls)
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
@@ -306,7 +313,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"single-folder-root-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -318,7 +325,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder1_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="folder1_test{i}".format(i=i), feed_url=feed_url_for(f"single-folder-folder1-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -330,7 +337,7 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder2_test{i}".format(i=i), feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+            src = Source(name="folder2_test{i}".format(i=i), feed_url=feed_url_for(f"single-folder-folder2-{i}"), interval=0, last_success=ls, last_change=ls)
             src.max_index = 1
             src.save()
 
@@ -346,9 +353,10 @@ class SubscriptionsTest(BaseTest):
     def test_get_unread_posts_oldest_first(self, mock):
         """Source.get_unread_posts(newest_first=False) must work the same as newest_first=True."""
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        feed_url = feed_url_for("oldest-first")
+        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
 
-        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src = Source(name="test1", feed_url=feed_url, interval=0)
         src.save()
 
         read_feed(src, output=NullOutput())
