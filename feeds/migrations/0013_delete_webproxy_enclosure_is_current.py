@@ -4,18 +4,17 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0012_source_last_read_subscription'),
+        ("feeds", "0012_source_last_read_subscription"),
     ]
 
     operations = [
         migrations.DeleteModel(
-            name='WebProxy',
+            name="WebProxy",
         ),
         migrations.AddField(
-            model_name='enclosure',
-            name='is_current',
+            model_name="enclosure",
+            name="is_current",
             field=models.BooleanField(default=True),
         ),
     ]

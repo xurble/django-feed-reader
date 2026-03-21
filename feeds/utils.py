@@ -1,19 +1,15 @@
-
-
 import datetime
 import logging
-from typing import TextIO, List, Tuple, Optional
 from sys import stdout
+from typing import List, Optional, TextIO, Tuple
 
-
-from django.db.models import Q, F
-from django.utils import timezone
-from django.conf import settings
-from dripfeed import DripFeed, DripFeedException
 import requests
+from django.conf import settings
+from django.db.models import F, Q
+from django.utils import timezone
+from dripfeed import DripFeed, DripFeedException
 
 from feeds.models import Source, Subscription
-
 from feeds.url_safety import (
     is_safe_http_redirect_target,
     resolve_feed_redirect_location,
@@ -66,7 +62,9 @@ def _read_feed_resolve_url(source_feed: Source) -> str:
     return feed_url
 
 
-def _read_feed_initial_get(source_feed: Source, feed_url: str, headers: dict, output: TextIO) -> Optional[requests.Response]:
+def _read_feed_initial_get(
+    source_feed: Source, feed_url: str, headers: dict, output: TextIO
+) -> Optional[requests.Response]:
     try:
         ret = requests.get(
             feed_url,
@@ -86,7 +84,9 @@ def _read_feed_initial_get(source_feed: Source, feed_url: str, headers: dict, ou
         return None
 
 
-def _read_feed_apply_permanent_redirect(source_feed: Source, ret: requests.Response) -> None:
+def _read_feed_apply_permanent_redirect(
+    source_feed: Source, ret: requests.Response
+) -> None:
     if "Location" not in ret.headers:
         source_feed.last_result = "Feed has moved but no location provided"
         return
@@ -162,9 +162,9 @@ def _read_feed_follow_temporary_redirect(
             )[:255]
 
     except (requests.RequestException, KeyError, OSError) as ex:
-        source_feed.last_result = (
-            "Failed Redirection to " + new_url + " " + str(ex)
-        )[:255]
+        source_feed.last_result = ("Failed Redirection to " + new_url + " " + str(ex))[
+            :255
+        ]
         source_feed.interval += 60
 
     return ret
@@ -217,8 +217,13 @@ def _read_feed_process_http_response(
         source_feed.last_result = "Not modified"
         source_feed.last_success = timezone.now()
 
-        if source_feed.last_change and (timezone.now() - source_feed.last_change).days > 7:
-            source_feed.last_result = "Clearing etag/last modified due to lack of changes"
+        if (
+            source_feed.last_change
+            and (timezone.now() - source_feed.last_change).days > 7
+        ):
+            source_feed.last_result = (
+                "Clearing etag/last modified due to lack of changes"
+            )
             source_feed.etag = None
             source_feed.last_modified = None
 
@@ -352,7 +357,9 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
     _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
 
 
-def test_feed(source_feed: Source, cache: bool = False, output: TextIO = stdout) -> bool:
+def test_feed(
+    source_feed: Source, cache: bool = False, output: TextIO = stdout
+) -> bool:
     """Tests if a specific feed can be reached locally
 
     Will not use any cloudflare busting if any is available
@@ -373,7 +380,9 @@ def test_feed(source_feed: Source, cache: bool = False, output: TextIO = stdout)
 
     output.write(f"\nTesting: {source_feed.feed_url}")
 
-    headers = {"User-Agent": get_agent(source_feed)}  # identify ourselves and also stop our requests getting picked up by any cache
+    headers = {
+        "User-Agent": get_agent(source_feed)
+    }  # identify ourselves and also stop our requests getting picked up by any cache
 
     if cache:
         if source_feed.etag:
@@ -439,7 +448,11 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
     to_read = list(
         Subscription.objects.filter(
             Q(user=user)
-            & (Q(source=None) | Q(is_river=True) | Q(last_read__lt=F("source__max_index")))
+            & (
+                Q(source=None)
+                | Q(is_river=True)
+                | Q(last_read__lt=F("source__max_index"))
+            )
         )
         .select_related("source")
         .order_by("-is_river", "name")
@@ -481,4 +494,6 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
                     parent._unread_count += folder._unread_count
                 groups.pop(folder.id)
 
-    return [s for s in subs_list if s.unread_count > 0 or s.is_river]  # Filter out folders with no undread items
+    return [
+        s for s in subs_list if s.unread_count > 0 or s.is_river
+    ]  # Filter out folders with no undread items

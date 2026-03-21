@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0001_initial'),
+        ("feeds", "0001_initial"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='source',
-            name='due_poll',
-            field=models.DateTimeField(default='1900-01-01 00:00:00'),
+            model_name="source",
+            name="due_poll",
+            field=models.DateTimeField(default="1900-01-01 00:00:00"),
         ),
     ]

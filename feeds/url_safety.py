@@ -73,7 +73,13 @@ def is_safe_http_redirect_target(url: str) -> bool:
 
     try:
         ip = ipaddress.ip_address(host_for_ip)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+        ):
             return False
         if ip == ipaddress.ip_address("169.254.169.254"):
             return False

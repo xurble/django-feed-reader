@@ -4,15 +4,16 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0007_auto_20210502_0716'),
+        ("feeds", "0007_auto_20210502_0716"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='post',
-            name='guid',
-            field=models.CharField(blank=True, db_index=True, max_length=512, null=True),
+            model_name="post",
+            name="guid",
+            field=models.CharField(
+                blank=True, db_index=True, max_length=512, null=True
+            ),
         ),
     ]

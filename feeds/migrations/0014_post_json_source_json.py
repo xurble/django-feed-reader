@@ -4,20 +4,19 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0013_delete_webproxy_enclosure_is_current'),
+        ("feeds", "0013_delete_webproxy_enclosure_is_current"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='post',
-            name='json',
+            model_name="post",
+            name="json",
             field=models.JSONField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='source',
-            name='json',
+            model_name="source",
+            name="json",
             field=models.JSONField(blank=True, null=True),
         ),
     ]

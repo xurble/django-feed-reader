@@ -4,15 +4,16 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0010_enclosure_description_enclosure_medium'),
+        ("feeds", "0010_enclosure_description_enclosure_medium"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='post',
-            name='guid',
-            field=models.CharField(blank=True, db_index=True, max_length=768, null=True),
+            model_name="post",
+            name="guid",
+            field=models.CharField(
+                blank=True, db_index=True, max_length=768, null=True
+            ),
         ),
     ]

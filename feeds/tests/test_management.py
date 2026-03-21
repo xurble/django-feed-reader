@@ -8,7 +8,6 @@ from django.test import TransactionTestCase
 
 
 class RefreshFeedsCommandTests(TransactionTestCase):
-
     @patch("feeds.management.commands.refreshfeeds.update_feeds")
     def test_refreshfeeds_calls_update_feeds_with_batch_size(self, mock_update):
         out = StringIO()

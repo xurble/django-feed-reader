@@ -4,35 +4,34 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0006_auto_20190901_1644'),
+        ("feeds", "0006_auto_20190901_1644"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='post',
-            name='image_url',
+            model_name="post",
+            name="image_url",
             field=models.CharField(blank=True, max_length=512, null=True),
         ),
         migrations.AlterField(
-            model_name='source',
-            name='feed_url',
+            model_name="source",
+            name="feed_url",
             field=models.CharField(max_length=512),
         ),
         migrations.AlterField(
-            model_name='source',
-            name='image_url',
+            model_name="source",
+            name="image_url",
             field=models.CharField(blank=True, max_length=512, null=True),
         ),
         migrations.AlterField(
-            model_name='source',
-            name='last_302_url',
+            model_name="source",
+            name="last_302_url",
             field=models.CharField(blank=True, max_length=512, null=True),
         ),
         migrations.AlterField(
-            model_name='source',
-            name='last_polled',
+            model_name="source",
+            name="last_polled",
             field=models.DateTimeField(blank=True, null=True),
         ),
     ]

@@ -4,20 +4,19 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0008_allow_longer_post_guid'),
+        ("feeds", "0008_allow_longer_post_guid"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='source',
-            name='last_change',
+            model_name="source",
+            name="last_change",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AlterField(
-            model_name='source',
-            name='last_success',
+            model_name="source",
+            name="last_success",
             field=models.DateTimeField(blank=True, null=True),
         ),
     ]

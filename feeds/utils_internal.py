@@ -1,4 +1,3 @@
-
 import datetime
 import hashlib
 import json
@@ -6,15 +5,13 @@ import logging
 import time
 from typing import TextIO
 
+import feedparser as parser
+import pyrfc3339
+import requests
 from django.conf import settings
 from django.utils import timezone
-import requests
 
-
-import feedparser as parser
-from feeds.models import Source, Enclosure, Post
-import pyrfc3339
-
+from feeds.models import Enclosure, Post, Source
 
 VERIFY_HTTPS = True
 if hasattr(settings, "FEEDS_VERIFY_HTTPS"):
@@ -162,7 +159,9 @@ def _batch_sync_enclosures_normalized(
         try:
             if pe["href"] not in seen_files:
                 enc_type = pe["type"] if "type" in pe else "audio/mpeg"
-                ne = Enclosure(post=p, href=pe["href"], length=pe["length"], type=enc_type)
+                ne = Enclosure(
+                    post=p, href=pe["href"], length=pe["length"], type=enc_type
+                )
                 if with_medium_description:
                     if "medium" in pe:
                         ne.medium = pe["medium"]
@@ -202,13 +201,7 @@ def _batch_sync_enclosures_json(p: Post, e):
 
 def _customize_sanitizer(fp):
 
-    bad_attributes = [
-        "align",
-        "valign",
-        "hspace",
-        "width",
-        "height"
-    ]
+    bad_attributes = ["align", "valign", "hspace", "width", "height"]
 
     for item in bad_attributes:
         try:
@@ -220,12 +213,15 @@ def _customize_sanitizer(fp):
 
 def get_agent(source_feed: Source):
 
-    agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(user_agent=settings.FEEDS_USER_AGENT, server=settings.FEEDS_SERVER, subs=source_feed.subscriber_count)
+    agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(
+        user_agent=settings.FEEDS_USER_AGENT,
+        server=settings.FEEDS_SERVER,
+        subs=source_feed.subscriber_count,
+    )
     return agent
 
 
 def fix_relative(html: str, url: str):
-
     """Rewrite relative and protocol-relative URLs in HTML to absolute URLs."""
     try:
         base = "/".join(url.split("/")[:3])
@@ -311,7 +307,9 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
         source_feed.last_change = timezone.now()
 
         # Assign indices in one round-trip (avoid per-post save + signal overhead).
-        posts = list(Post.objects.filter(source=source_feed, index=0).order_by("created"))
+        posts = list(
+            Post.objects.filter(source=source_feed, index=0).order_by("created")
+        )
         if posts:
             start = source_feed.max_index
             for i, p in enumerate(posts, start=1):
@@ -331,12 +329,13 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
 
     # output.write(ret.content)
     try:
-
         _customize_sanitizer(parser)
         f = parser.parse(feed_content)  # need to start checking feed parser errors here
-        entries = f['entries']
+        entries = f["entries"]
         if len(entries):
-            source_feed.last_success = timezone.now()  # in case we start auto unsubscribing long dead feeds
+            source_feed.last_success = (
+                timezone.now()
+            )  # in case we start auto unsubscribing long dead feeds
         else:
             source_feed.last_result = "Feed is empty"
             ok = False
@@ -411,12 +410,14 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
             # but it can also be the alt-text of an an Enclosure
             if hasattr(e, "content"):
                 for c in e.content:
-                    if c.get("type", "") == "text/html" and len(c.get("value", "")) > len(body):
+                    if c.get("type", "") == "text/html" and len(
+                        c.get("value", "")
+                    ) > len(body):
                         body = c.value
 
             body = fix_relative(body, source_feed.site_url)
-            e_guid = getattr(e, 'guid', None)
-            e_link = getattr(e, 'link', None)
+            e_guid = getattr(e, "guid", None)
+            e_link = getattr(e, "link", None)
             guid = make_guid(e_guid, e_link, body)
             p = posts_by_guid.get(guid)
             if p is not None:
@@ -428,10 +429,14 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
                 changed = True
 
                 try:
-                    p.created = datetime.datetime.fromtimestamp(time.mktime(e.published_parsed)).replace(tzinfo=datetime.timezone.utc)
+                    p.created = datetime.datetime.fromtimestamp(
+                        time.mktime(e.published_parsed)
+                    ).replace(tzinfo=datetime.timezone.utc)
                 except Exception:
                     try:
-                        p.created = datetime.datetime.fromtimestamp(time.mktime(e.updated_parsed)).replace(tzinfo=datetime.timezone.utc)
+                        p.created = datetime.datetime.fromtimestamp(
+                            time.mktime(e.updated_parsed)
+                        ).replace(tzinfo=datetime.timezone.utc)
                     except Exception as ex3:
                         output.write("\nCREATED ERROR:" + str(ex3))
                         p.created = timezone.now()
@@ -490,14 +495,24 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
         keep_going = True
         while keep_going:
             keep_going = False  # assume were stopping unless we find a next link
-            if hasattr(f.feed, 'links'):
+            if hasattr(f.feed, "links"):
                 for link in f.feed.links:
-                    if 'rel' in link and link['rel'] == "next":
-                        ret = requests.get(link['href'], headers=headers, verify=VERIFY_HTTPS, allow_redirects=True, timeout=20)
-                        (pok, pchanged) = parse_feed_xml(source_feed, ret.content, output)
+                    if "rel" in link and link["rel"] == "next":
+                        ret = requests.get(
+                            link["href"],
+                            headers=headers,
+                            verify=VERIFY_HTTPS,
+                            allow_redirects=True,
+                            timeout=20,
+                        )
+                        (pok, pchanged) = parse_feed_xml(
+                            source_feed, ret.content, output
+                        )
                         # print(link['href'])
                         # print((pok, pchanged))
-                        f = parser.parse(ret.content)  # rebase the loop on this feed version
+                        f = parser.parse(
+                            ret.content
+                        )  # rebase the loop on this feed version
                         keep_going = True
 
     return (ok, changed)
@@ -510,9 +525,11 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
 
     try:
         f = json.loads(feed_content)
-        entries = f['items']
+        entries = f["items"]
         if len(entries):
-            source_feed.last_success = timezone.now()  # in case we start auto unsubscribing long dead feeds
+            source_feed.last_success = (
+                timezone.now()
+            )  # in case we start auto unsubscribing long dead feeds
         else:
             source_feed.last_result = "Feed is empty"
             source_feed.interval += 120
@@ -527,12 +544,11 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
         ok = False
 
     if ok:
-
         if "expired" in f and f["expired"]:
             # This feed says it is done
             # TODO: permanently disable
             # for now source_feed.interval to max
-            source_feed.interval = (24*3*60)
+            source_feed.interval = 24 * 3 * 60
             source_feed.last_result = "This feed has expired"
             return (False, False)
 
@@ -548,14 +564,18 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
         try:
             if "description" in f:
                 _customize_sanitizer(parser)
-                source_feed.description = parser.sanitizer._sanitize_html(f["description"], "utf-8", 'text/html')
+                source_feed.description = parser.sanitizer._sanitize_html(
+                    f["description"], "utf-8", "text/html"
+                )
                 source_feed.save(update_fields=["description"])
         except Exception:
             pass
 
         try:
             _customize_sanitizer(parser)
-            source_feed.name = parser.sanitizer._sanitize_html(source_feed.name, "utf-8", 'text/html')
+            source_feed.name = parser.sanitizer._sanitize_html(
+                source_feed.name, "utf-8", "text/html"
+            )
             source_feed.save(update_fields=["name"])
 
         except Exception:
@@ -589,7 +609,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
                 output.write("\nEXISTING " + guid)
             else:
                 output.write("\nNEW " + guid)
-                p = Post(index=0, body=' ')
+                p = Post(index=0, body=" ")
                 p.found = timezone.now()
                 changed = True
                 p.source = source_feed
@@ -601,9 +621,13 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
 
             # borrow the RSS parser's sanitizer
             _customize_sanitizer(parser)
-            body = parser.sanitizer._sanitize_html(body, "utf-8", 'text/html')  # TODO: validate charset ??
+            body = parser.sanitizer._sanitize_html(
+                body, "utf-8", "text/html"
+            )  # TODO: validate charset ??
             _customize_sanitizer(parser)
-            title = parser.sanitizer._sanitize_html(title, "utf-8", 'text/html')  # TODO: validate charset ??
+            title = parser.sanitizer._sanitize_html(
+                title, "utf-8", "text/html"
+            )  # TODO: validate charset ??
             # no other fields are ever marked as |safe in the templates
 
             if "banner_image" in e:
@@ -615,7 +639,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             try:
                 p.link = e["url"]
             except Exception:
-                p.link = ''
+                p.link = ""
 
             p.title = title
 
@@ -650,7 +674,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
                 output.write("\nNo enclosures - " + str(ex))
 
         if SAVE_JSON:
-            f['items'] = []
+            f["items"] = []
             source_feed.json = f
             source_feed.save(update_fields=["json"])
 

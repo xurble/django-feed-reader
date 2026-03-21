@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0002_auto_20190604_0845'),
+        ("feeds", "0002_auto_20190604_0845"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='post',
-            name='image_url',
+            model_name="post",
+            name="image_url",
             field=models.CharField(blank=True, max_length=255, null=True),
         ),
     ]

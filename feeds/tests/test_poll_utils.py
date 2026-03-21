@@ -5,16 +5,17 @@ from unittest.mock import MagicMock, patch
 
 from django.test import TransactionTestCase
 
+from feeds import utils as feeds_utils
 from feeds.models import Source
 from feeds.utils import update_feeds
-from feeds import utils as feeds_utils
 
 
 class UpdateFeedsTests(TransactionTestCase):
-
     @patch("feeds.utils.read_feed")
     def test_update_feeds_invokes_read_feed_for_due_sources(self, mock_read_feed):
-        src = Source(name="due", feed_url="http://example.com/feed.xml", interval=60, live=True)
+        src = Source(
+            name="due", feed_url="http://example.com/feed.xml", interval=60, live=True
+        )
         src.save()
 
         update_feeds(max_feeds=10, output=StringIO())
@@ -26,7 +27,6 @@ class UpdateFeedsTests(TransactionTestCase):
 
 
 class TestFeedTests(TransactionTestCase):
-
     @patch("feeds.utils.requests.get")
     def test_test_feed_returns_true_on_ok_response(self, mock_get):
         response = MagicMock()

@@ -1,23 +1,22 @@
 import datetime
 import hashlib
+import logging
 from collections import defaultdict
 from urllib.parse import urlencode
-import logging
 
-from django.db.models.signals import post_delete, post_save
-from django.dispatch import receiver
+import django.utils as django_utils
 from django.conf import settings
-from django.core.paginator import Paginator, EmptyPage, InvalidPage
+from django.core.paginator import EmptyPage, InvalidPage, Paginator
 from django.db import models
 from django.db.models import Q
-import django.utils as django_utils
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 from django.utils.deconstruct import deconstructible
 
 
 @deconstructible
 class ExpiresGenerator(object):
-    """Callable Key Generator that returns a random keystring.
-    """
+    """Callable Key Generator that returns a random keystring."""
 
     def __call__(self):
         return django_utils.timezone.now() - datetime.timedelta(days=1)
@@ -31,8 +30,9 @@ def default_due_poll():
 class Source(models.Model):
     """This class represents a Feed to be read.
 
-        It really should have been called Feed, but what can you do?
+    It really should have been called Feed, but what can you do?
     """
+
     name = models.CharField(max_length=255, blank=True, null=True)
     """**str** The name of the Feed (automatically populated)"""
 
@@ -53,11 +53,15 @@ class Source(models.Model):
     last_polled = models.DateTimeField(blank=True, null=True)
     """**datetime** The last time the Feed was fetched"""
 
-    due_poll = models.DateTimeField(default=default_due_poll)  # default to distant past to put new sources to front of queue
+    due_poll = models.DateTimeField(
+        default=default_due_poll
+    )  # default to distant past to put new sources to front of queue
     """**datetime** When the Feed is next due to be fetched"""
 
     etag = models.CharField(max_length=255, blank=True, null=True)
-    last_modified = models.CharField(max_length=255, blank=True, null=True)  # just pass this back and forward between server and me , no need to parse
+    last_modified = models.CharField(
+        max_length=255, blank=True, null=True
+    )  # just pass this back and forward between server and me , no need to parse
 
     last_result = models.CharField(max_length=255, blank=True, null=True)
     """**str** The result the last fetch"""
@@ -111,7 +115,7 @@ class Source(models.Model):
 
         Will be the **site_url** if it's present, otherwise **feed_url**
         """
-        if self.site_url is None or self.site_url == '':
+        if self.site_url is None or self.site_url == "":
             return self.feed_url
         else:
             return self.site_url
@@ -140,7 +144,10 @@ class Source(models.Model):
         elif self.last_change is None or self.last_success is None:
             css = "background-color:#D00;color:white"
         else:
-            dd = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - self.last_change
+            dd = (
+                datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+                - self.last_change
+            )
 
             days = int(dd.days / 2)
 
@@ -167,9 +174,12 @@ class Source(models.Model):
         elif self.last_change is None or self.last_success is None:
             css = "#F00;"
         else:
-            dd = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - self.last_change
+            dd = (
+                datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+                - self.last_change
+            )
 
-            days = int(dd.days/2)
+            days = int(dd.days / 2)
 
             red = days
             if red > 255:
@@ -191,11 +201,15 @@ class Source(models.Model):
         """
 
         if newest_first:
-            return list(self.posts.filter(index__gt=self.last_read).order_by("-created"))
+            return list(
+                self.posts.filter(index__gt=self.last_read).order_by("-created")
+            )
         else:
             return list(self.posts.filter(index__gt=self.last_read).order_by("created"))
 
-    def get_paginated_posts(self, page: int, newest_first: bool = True, posts_per_page: int = 20):
+    def get_paginated_posts(
+        self, page: int, newest_first: bool = True, posts_per_page: int = 20
+    ):
         """Get a posts from the feed a page at a time
 
         :param page: The page to fetch.
@@ -227,8 +241,7 @@ class Source(models.Model):
         return (posts, paginator)
 
     def mark_read(self):
-        """In a single user system, mark this feed as read
-        """
+        """In a single user system, mark this feed as read"""
         self.last_read = self.max_index
         self.save()
 
@@ -252,19 +265,19 @@ class Source(models.Model):
         ]
         indexes = [
             # update_feeds: filter(live=True, due_poll__lt=now).order_by("due_poll")
-            models.Index(fields=["live", "due_poll"], name="feeds_source_live_due_poll_idx"),
+            models.Index(
+                fields=["live", "due_poll"], name="feeds_source_live_due_poll_idx"
+            ),
         ]
 
 
 class Post(models.Model):
-    """An entry in a feed
-
-    """
+    """An entry in a feed"""
 
     GUID_MAX_LENGTH = 768
     # an entry in a feed
 
-    source = models.ForeignKey(Source, on_delete=models.CASCADE, related_name='posts')
+    source = models.ForeignKey(Source, on_delete=models.CASCADE, related_name="posts")
     """**Source** The source feed that this post belongs to"""
 
     title = models.TextField(blank=True)
@@ -282,7 +295,9 @@ class Post(models.Model):
     created = models.DateTimeField(db_index=True)
     """**datetime** The created date for this post as reported in the feed"""
 
-    guid = models.CharField(max_length=GUID_MAX_LENGTH, blank=True, null=True, db_index=True)
+    guid = models.CharField(
+        max_length=GUID_MAX_LENGTH, blank=True, null=True, db_index=True
+    )
     """**str** The unique ID for this post"""
 
     # SHA-256 hex of guid; used for DB uniqueness (MySQL index length limit on long guids).
@@ -365,10 +380,9 @@ class Post(models.Model):
 
 
 class Enclosure(models.Model):
-    """An enclosure on a post
+    """An enclosure on a post"""
 
-    """
-    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='enclosures')
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="enclosures")
     """**Post** The Post that this Enclosure belongs to"""
 
     length = models.IntegerField(default=0)
@@ -422,18 +436,31 @@ class Enclosure(models.Model):
 class Subscription(models.Model):
     """A subscription to a Source Feed by a User
 
-        Subscriptions are also the way folder structures are set up
+    Subscriptions are also the way folder structures are set up
     """
+
     def __str__(self):
         return "'%s' for user %s" % (self.name, str(self.user))
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     """**User** The owner of the Subscription"""
 
-    source = models.ForeignKey(Source, blank=True, null=True, on_delete=models.CASCADE, related_name='subscriptions')  # null source means we are a folder
+    source = models.ForeignKey(
+        Source,
+        blank=True,
+        null=True,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+    )  # null source means we are a folder
     """**Source** The source feed of the subscription.  If this is **None** then this is actually a folder"""
 
-    parent = models.ForeignKey('self', blank=True, null=True, on_delete=models.CASCADE, related_name='subscriptions')
+    parent = models.ForeignKey(
+        "self",
+        blank=True,
+        null=True,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+    )
     """**Subscription** The parent folder of the subscription.  **None** if the subscription is at the root leve"""
 
     last_read = models.IntegerField(default=0)
@@ -448,8 +475,8 @@ class Subscription(models.Model):
     def unread_count(self) -> int:
         """**int** The number of undread posts in teh subscription
 
-            If the subscription is acting as a folder, this will total
-            up the unread counts of all children
+        If the subscription is acting as a folder, this will total
+        up the unread counts of all children
         """
         if self.source:
             return self.source.max_index - self.last_read
@@ -473,7 +500,9 @@ class Subscription(models.Model):
             children_by_parent = _subscription_children_by_parent(self.user_id)
 
         if self.source:
-            posts = list(Post.objects.filter(Q(source=self.source) & Q(index__gt=self.last_read)))
+            posts = list(
+                Post.objects.filter(Q(source=self.source) & Q(index__gt=self.last_read))
+            )
             for post in posts:
                 post.from_subscription = self
                 post_list.append(post)
@@ -482,10 +511,12 @@ class Subscription(models.Model):
             child._gather_posts(post_list, children_by_parent)
 
     def get_unread_posts(self, oldest_first=True):
-        """ Returns all the unread posts in a subscription"""
+        """Returns all the unread posts in a subscription"""
         posts = []
         self._gather_posts(posts)
-        posts.sort(reverse=(not oldest_first), key=lambda post: post.created)  # Sort in ascending order
+        posts.sort(
+            reverse=(not oldest_first), key=lambda post: post.created
+        )  # Sort in ascending order
         return posts
 
     def _gather_sources(self, source_list: dict, children_by_parent=None):
@@ -498,7 +529,9 @@ class Subscription(models.Model):
         for child in children_by_parent.get(self.id, []):
             child._gather_sources(source_list, children_by_parent)
 
-    def get_paginated_posts(self, page: int, oldest_first: bool =True, posts_per_page: int = 20):
+    def get_paginated_posts(
+        self, page: int, oldest_first: bool = True, posts_per_page: int = 20
+    ):
         """Get a posts from the feed a page at a time
 
         :param page: The page to fetch.

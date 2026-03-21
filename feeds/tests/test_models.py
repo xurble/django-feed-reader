@@ -1,30 +1,26 @@
 import hashlib
 
 import requests_mock
-
-from django.test import SimpleTestCase, TransactionTestCase
-from django.db import IntegrityError, transaction
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
+from django.test import SimpleTestCase, TransactionTestCase
 from django.utils import timezone
 
-from feeds.models import Source, Post, Enclosure, Subscription, default_due_poll
+from feeds.models import Enclosure, Post, Source, Subscription, default_due_poll
 from feeds.utils import read_feed
 
-from .base import BaseTest, NullOutput, BASE_URL
-
+from .base import BASE_URL, BaseTest, NullOutput
 
 User = get_user_model()
 
 
 class SourceDefaultDuePollTests(SimpleTestCase):
-
     def test_default_due_poll_is_timezone_aware(self):
         d = default_due_poll()
         self.assertTrue(timezone.is_aware(d))
 
 
 class SourceDisplayPropertiesTests(TransactionTestCase):
-
     def test_best_link_uses_site_url_when_set(self):
         s = Source(
             name="n",
@@ -81,19 +77,23 @@ class SourceDisplayPropertiesTests(TransactionTestCase):
 
 
 class SourceIntegrityConstraintTests(TransactionTestCase):
-
     def test_feed_url_must_be_unique(self):
-        Source.objects.create(name="one", feed_url="http://example.com/feed.xml", interval=0)
+        Source.objects.create(
+            name="one", feed_url="http://example.com/feed.xml", interval=0
+        )
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
-                Source.objects.create(name="two", feed_url="http://example.com/feed.xml", interval=0)
+                Source.objects.create(
+                    name="two", feed_url="http://example.com/feed.xml", interval=0
+                )
 
 
 class PostIntegrityConstraintTests(TransactionTestCase):
-
     def _source(self, suffix="1"):
-        return Source.objects.create(name=f"s{suffix}", feed_url=f"http://example.com/{suffix}.xml", interval=0)
+        return Source.objects.create(
+            name=f"s{suffix}", feed_url=f"http://example.com/{suffix}.xml", interval=0
+        )
 
     def test_guid_must_be_unique_per_source_when_present(self):
         src = self._source()
@@ -122,15 +122,43 @@ class PostIntegrityConstraintTests(TransactionTestCase):
         src2 = self._source("b")
         guid = "same-guid"
 
-        Post.objects.create(source=src1, title="one", index=1, guid=guid, body="body", created=timezone.now())
-        Post.objects.create(source=src2, title="two", index=1, guid=guid, body="body", created=timezone.now())
+        Post.objects.create(
+            source=src1,
+            title="one",
+            index=1,
+            guid=guid,
+            body="body",
+            created=timezone.now(),
+        )
+        Post.objects.create(
+            source=src2,
+            title="two",
+            index=1,
+            guid=guid,
+            body="body",
+            created=timezone.now(),
+        )
 
         self.assertEqual(Post.objects.filter(guid=guid).count(), 2)
 
     def test_multiple_null_guids_are_allowed(self):
         src = self._source()
-        Post.objects.create(source=src, title="one", index=1, guid=None, body="body", created=timezone.now())
-        Post.objects.create(source=src, title="two", index=2, guid=None, body="body", created=timezone.now())
+        Post.objects.create(
+            source=src,
+            title="one",
+            index=1,
+            guid=None,
+            body="body",
+            created=timezone.now(),
+        )
+        Post.objects.create(
+            source=src,
+            title="two",
+            index=2,
+            guid=None,
+            body="body",
+            created=timezone.now(),
+        )
 
         self.assertEqual(Post.objects.filter(source=src, guid__isnull=True).count(), 2)
 
@@ -167,7 +195,6 @@ class PostIntegrityConstraintTests(TransactionTestCase):
 
 
 class EnclosureMediaTypeTests(TransactionTestCase):
-
     def _post(self):
         src = Source(name="s", feed_url="http://x.com/f.xml", interval=0)
         src.save()
@@ -198,17 +225,25 @@ class EnclosureMediaTypeTests(TransactionTestCase):
         self.assertTrue(e.is_video)
 
     def test_medium_field_overrides_mime_prefix(self):
-        e = Enclosure(post=self._post(), href="http://x.com/x", type="application/octet-stream", medium="image")
+        e = Enclosure(
+            post=self._post(),
+            href="http://x.com/x",
+            type="application/octet-stream",
+            medium="image",
+        )
         self.assertTrue(e.is_image)
 
 
 class SubscriptionIntegrityConstraintTests(TransactionTestCase):
-
     def _user(self, suffix="1"):
         return User.objects.create(username=f"user-{suffix}")
 
     def _source(self, suffix="1"):
-        return Source.objects.create(name=f"s{suffix}", feed_url=f"http://example.com/feed-{suffix}.xml", interval=0)
+        return Source.objects.create(
+            name=f"s{suffix}",
+            feed_url=f"http://example.com/feed-{suffix}.xml",
+            interval=0,
+        )
 
     def test_user_cannot_subscribe_to_same_source_twice(self):
         user = self._user()
@@ -224,7 +259,9 @@ class SubscriptionIntegrityConstraintTests(TransactionTestCase):
         Subscription.objects.create(user=user, source=None, name="Folder A")
         Subscription.objects.create(user=user, source=None, name="Folder B")
 
-        self.assertEqual(Subscription.objects.filter(user=user, source__isnull=True).count(), 2)
+        self.assertEqual(
+            Subscription.objects.filter(user=user, source__isnull=True).count(), 2
+        )
 
     def test_different_users_can_subscribe_to_same_source(self):
         src = self._source()
@@ -236,11 +273,15 @@ class SubscriptionIntegrityConstraintTests(TransactionTestCase):
 
 @requests_mock.Mocker()
 class PostModelTest(BaseTest):
-
     def test_title_url_encoded_returns_value(self, mock):
         """Post.title_url_encoded must return the encoded title string."""
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()

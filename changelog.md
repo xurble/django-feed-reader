@@ -1,4 +1,13 @@
 
+### 2.0.1
+- Fix: `get_unread_subscription_list_for_user` no longer returns read-only folder subscriptions as unread
+- Fix: Paginated feed import (`rel="next"`) when backfilling history for a new source
+- Fix: Numerous polling and parsing bugs (HTTP errors and timeouts, 304 handling and stale etag clearing, relative redirects, JSON feed expiry, empty or invalid bodies, entries without `enclosures`, incorrect `update_fields`, `Source.get_unread_posts`, `Post.title_url_encoded`, timezone-aware `due_poll`, and related issues)
+- Security: Validate redirect targets before following `Location` (SSRF hardening); prefer `https://` for protocol-relative URLs in HTML and when deriving default `FEEDS_SERVER` from `ALLOWED_HOSTS`
+- Data integrity: Unique constraints for `Post` (per source + GUID), `Source` (`feed_url`), and non-folder `Subscription` (user + source), including MySQL-compatible migrations
+- Performance: Indexes on `Source.due_poll`, `Source.live`, `Subscription.user`, `Subscription.parent`; fewer queries in subscription listing and batched enclosure writes for feeds with many attachments
+- Misc: Pytest test package, expanded coverage, GitHub Actions CI; packaging and documentation updates; internal refactors (`feeds.url_safety`, smaller `read_feed` helpers, shared enclosure sync) without breaking the public `feeds.utils` API
+
 ### 2.0.0
 - Feature: Convenience method to get unread posts / mark read when running single user
 - Feature: Convenience methods on Subscription to get read and unread posts and mark read

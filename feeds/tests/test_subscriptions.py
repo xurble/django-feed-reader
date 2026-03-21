@@ -1,18 +1,17 @@
 from datetime import timedelta
 
+import requests_mock
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-import requests_mock
 
-from feeds.models import Source, Subscription, Post
+from feeds.models import Post, Source, Subscription
 from feeds.utils import (
-    read_feed,
     get_subscription_list_for_user,
     get_unread_subscription_list_for_user,
+    read_feed,
 )
 
-from .base import BaseTest, NullOutput, BASE_URL
-
+from .base import BaseTest, NullOutput
 
 User = get_user_model()
 
@@ -23,14 +22,21 @@ def feed_url_for(label):
 
 @requests_mock.Mocker()
 class SubscriptionsTest(BaseTest):
-
     def test_single_user(self, mock):
 
         feed_url = feed_url_for("single-user")
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+            url=feed_url,
+        )
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls)
+        src = Source(
+            name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls
+        )
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
@@ -52,14 +58,20 @@ class SubscriptionsTest(BaseTest):
     def test_subscriber_count(self, mock):
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=feed_url_for("subscriber-count"), interval=0, last_success=ls, last_change=ls)
+        src = Source(
+            name="test1",
+            feed_url=feed_url_for("subscriber-count"),
+            interval=0,
+            last_success=ls,
+            last_change=ls,
+        )
         src.save()
         src.refresh_from_db()
         # If we don't use Subscriptions then the default is 1
         self.assertEqual(src.subscriber_count, 1)
 
         # First subscriber keeps num_subs at 1
-        user = User(username='user1', email='x@example.com')
+        user = User(username="user1", email="x@example.com")
         user.save()
         sub = Subscription(user=user, source=src)
         sub.save()
@@ -67,7 +79,7 @@ class SubscriptionsTest(BaseTest):
         self.assertEqual(src.subscriber_count, 1)
 
         # Second subscriber ups it to 2
-        user2 = User(username='user2', email='y@example.com')
+        user2 = User(username="user2", email="y@example.com")
         user2.save()
         sub2 = Subscription(user=user2, source=src)
         sub2.save()
@@ -87,13 +99,21 @@ class SubscriptionsTest(BaseTest):
     def test_basic_subscription(self, mock):
 
         feed_url = feed_url_for("basic-subscription")
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+            url=feed_url,
+        )
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls)
+        src = Source(
+            name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls
+        )
         src.save()
 
-        user = User(email='x@example.com')
+        user = User(email="x@example.com")
         user.save()
 
         read_feed(src, output=NullOutput())
@@ -112,12 +132,18 @@ class SubscriptionsTest(BaseTest):
 
     def test_get_subscription_list_1(self, mock):
 
-        user = User(email='x@example.com')
+        user = User(email="x@example.com")
         user.save()
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"sub-list-1-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="test{i}".format(i=i),
+                feed_url=feed_url_for(f"sub-list-1-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
@@ -130,12 +156,18 @@ class SubscriptionsTest(BaseTest):
 
     def test_get_subscription_list_2(self, mock):
 
-        user = User(email='x@example.com')
+        user = User(email="x@example.com")
         user.save()
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"sub-list-2-root-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="test{i}".format(i=i),
+                feed_url=feed_url_for(f"sub-list-2-root-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
@@ -147,7 +179,13 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="folder_test{i}".format(i=i), feed_url=feed_url_for(f"sub-list-2-folder-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="folder_test{i}".format(i=i),
+                feed_url=feed_url_for(f"sub-list-2-folder-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
@@ -163,12 +201,18 @@ class SubscriptionsTest(BaseTest):
 
     def test_basic_subscription_read(self, mock):
 
-        user = User(email='x@example.com')
+        user = User(email="x@example.com")
         user.save()
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"basic-read-root-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="test{i}".format(i=i),
+                feed_url=feed_url_for(f"basic-read-root-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.last_read
             src.save()
@@ -181,12 +225,24 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(5):
             ls = timezone.now()
-            src = Source(name="folder_test{i}".format(i=i), feed_url=feed_url_for(f"basic-read-folder-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="folder_test{i}".format(i=i),
+                feed_url=feed_url_for(f"basic-read-folder-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
             # make the posts get created earlier as they increase in index to check the ordering below
-            p = Post(source=src, title=f"post{i}", created=timezone.now() - timedelta(days=i), index=1, guid=f"src-{src.id}-post-{i}")
+            p = Post(
+                source=src,
+                title=f"post{i}",
+                created=timezone.now() - timedelta(days=i),
+                index=1,
+                guid=f"src-{src.id}-post-{i}",
+            )
             p.save()
 
             sub = Subscription(user=user, source=src, parent=folder)
@@ -213,14 +269,20 @@ class SubscriptionsTest(BaseTest):
 
     def test_nested_subscription_read(self, mock):
 
-        user = User(email='x@example.com')
+        user = User(email="x@example.com")
         user.save()
 
         pcount = 0
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"nested-root-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="test{i}".format(i=i),
+                feed_url=feed_url_for(f"nested-root-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.save()
 
             for j in range(3):
@@ -235,11 +297,21 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder1_test{i}".format(i=i), feed_url=feed_url_for(f"nested-folder1-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="folder1_test{i}".format(i=i),
+                feed_url=feed_url_for(f"nested-folder1-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.save()
 
             for j in range(3):
-                p = Post(source=src, title=f"post-{pcount}", created=timezone.now()-timedelta(days=pcount))
+                p = Post(
+                    source=src,
+                    title=f"post-{pcount}",
+                    created=timezone.now() - timedelta(days=pcount),
+                )
                 p.save()
                 pcount += 1
 
@@ -252,11 +324,21 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder2_test{i}".format(i=i), feed_url=feed_url_for(f"nested-folder2-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="folder2_test{i}".format(i=i),
+                feed_url=feed_url_for(f"nested-folder2-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.save()
 
             for j in range(3):
-                p = Post(source=src, title=f"post-{pcount}", created=timezone.now()-timedelta(days=pcount))
+                p = Post(
+                    source=src,
+                    title=f"post-{pcount}",
+                    created=timezone.now() - timedelta(days=pcount),
+                )
                 p.save()
                 pcount += 1
 
@@ -291,10 +373,18 @@ class SubscriptionsTest(BaseTest):
     def test_get_unread(self, mock):
 
         feed_url = feed_url_for("get-unread")
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+            url=feed_url,
+        )
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls)
+        src = Source(
+            name="test1", feed_url=feed_url, interval=0, last_success=ls, last_change=ls
+        )
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
@@ -308,12 +398,18 @@ class SubscriptionsTest(BaseTest):
 
     def test_get_unread_count_for_single_folder(self, mock):
 
-        user = User(email='x@example.com')
+        user = User(email="x@example.com")
         user.save()
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="test{i}".format(i=i), feed_url=feed_url_for(f"single-folder-root-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="test{i}".format(i=i),
+                feed_url=feed_url_for(f"single-folder-root-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
@@ -325,7 +421,13 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder1_test{i}".format(i=i), feed_url=feed_url_for(f"single-folder-folder1-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="folder1_test{i}".format(i=i),
+                feed_url=feed_url_for(f"single-folder-folder1-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
@@ -337,7 +439,13 @@ class SubscriptionsTest(BaseTest):
 
         for i in range(3):
             ls = timezone.now()
-            src = Source(name="folder2_test{i}".format(i=i), feed_url=feed_url_for(f"single-folder-folder2-{i}"), interval=0, last_success=ls, last_change=ls)
+            src = Source(
+                name="folder2_test{i}".format(i=i),
+                feed_url=feed_url_for(f"single-folder-folder2-{i}"),
+                interval=0,
+                last_success=ls,
+                last_change=ls,
+            )
             src.max_index = 1
             src.save()
 
@@ -354,7 +462,13 @@ class SubscriptionsTest(BaseTest):
         """Source.get_unread_posts(newest_first=False) must work the same as newest_first=True."""
 
         feed_url = feed_url_for("oldest-first")
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml", url=feed_url)
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+            url=feed_url,
+        )
 
         src = Source(name="test1", feed_url=feed_url, interval=0)
         src.save()

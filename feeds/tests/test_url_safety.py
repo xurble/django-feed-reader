@@ -10,7 +10,6 @@ from feeds.url_safety import (
 
 
 class DeriveDefaultFeedsServerTests(SimpleTestCase):
-
     def test_uses_https_for_first_dotted_host(self):
         self.assertEqual(
             derive_default_feeds_server(["localhost", "api.example.org"]),
@@ -22,9 +21,10 @@ class DeriveDefaultFeedsServerTests(SimpleTestCase):
 
 
 class ResolveFeedRedirectLocationTests(SimpleTestCase):
-
     def test_scheme_relative_location(self):
-        resolved = resolve_feed_redirect_location("//other.example/feed", "http://a.com/rss.xml")
+        resolved = resolve_feed_redirect_location(
+            "//other.example/feed", "http://a.com/rss.xml"
+        )
         self.assertEqual(resolved, "http://other.example/feed")
 
     def test_absolute_path(self):
@@ -33,12 +33,13 @@ class ResolveFeedRedirectLocationTests(SimpleTestCase):
 
 
 class IsSafeHttpRedirectTargetTests(SimpleTestCase):
-
     def test_allows_public_http_url(self):
         self.assertTrue(is_safe_http_redirect_target("http://new.feed.com/"))
 
     def test_allows_public_https_url(self):
-        self.assertTrue(is_safe_http_redirect_target("https://feeds.example.org/news.atom"))
+        self.assertTrue(
+            is_safe_http_redirect_target("https://feeds.example.org/news.atom")
+        )
 
     def test_rejects_file_scheme(self):
         self.assertFalse(is_safe_http_redirect_target("file:///etc/passwd"))
@@ -50,7 +51,9 @@ class IsSafeHttpRedirectTargetTests(SimpleTestCase):
         self.assertFalse(is_safe_http_redirect_target("http://192.168.1.1/"))
 
     def test_rejects_metadata_ip(self):
-        self.assertFalse(is_safe_http_redirect_target("http://169.254.169.254/latest/meta-data"))
+        self.assertFalse(
+            is_safe_http_redirect_target("http://169.254.169.254/latest/meta-data")
+        )
 
     def test_rejects_localhost_hostname(self):
         self.assertFalse(is_safe_http_redirect_target("http://localhost/feed"))

@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0004_webproxy'),
+        ("feeds", "0004_webproxy"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='source',
-            name='description',
+            model_name="source",
+            name="description",
             field=models.TextField(blank=True, null=True),
         ),
     ]

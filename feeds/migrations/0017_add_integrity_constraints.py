@@ -4,22 +4,31 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0016_source_due_poll_timezone_aware_default'),
+        ("feeds", "0016_source_due_poll_timezone_aware_default"),
     ]
 
     operations = [
         migrations.AddConstraint(
-            model_name='post',
-            constraint=models.UniqueConstraint(condition=models.Q(('guid__isnull', False)), fields=('source', 'guid'), name='feeds_post_unique_source_guid_when_guid_present'),
+            model_name="post",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("guid__isnull", False)),
+                fields=("source", "guid"),
+                name="feeds_post_unique_source_guid_when_guid_present",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='source',
-            constraint=models.UniqueConstraint(fields=('feed_url',), name='feeds_source_unique_feed_url'),
+            model_name="source",
+            constraint=models.UniqueConstraint(
+                fields=("feed_url",), name="feeds_source_unique_feed_url"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='subscription',
-            constraint=models.UniqueConstraint(condition=models.Q(('source__isnull', False)), fields=('user', 'source'), name='feeds_subscription_unique_user_source_when_source_present'),
+            model_name="subscription",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("source__isnull", False)),
+                fields=("user", "source"),
+                name="feeds_subscription_unique_user_source_when_source_present",
+            ),
         ),
     ]

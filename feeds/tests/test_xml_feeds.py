@@ -1,27 +1,32 @@
 import os
 from importlib import reload
 
+import requests_mock
 from django.conf import settings
 from django.utils import timezone
-import requests_mock
 
+from feeds import utils, utils_internal
 from feeds.models import Source
-from feeds.utils_internal import hash_body
 from feeds.utils import read_feed
-from feeds import utils
-from feeds import utils_internal
+from feeds.utils_internal import hash_body
 
-from .base import BaseTest, NullOutput, BASE_URL, TEST_FILES_FOLDER
+from .base import BASE_URL, TEST_FILES_FOLDER, BaseTest, NullOutput
 
 
 @requests_mock.Mocker()
 class XMLFeedsTest(BaseTest):
-
     def test_atom_follows_rel_next_on_first_parse(self, mock):
         """First full parse should follow atom:link[@rel='next'] and merge pages."""
 
-        self._populate_mock(mock, status=200, test_file="atom_paged_1.xml", content_type="application/atom+xml")
-        content2 = open(os.path.join(TEST_FILES_FOLDER, "atom_paged_2.xml"), "rb").read()
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="atom_paged_1.xml",
+            content_type="application/atom+xml",
+        )
+        content2 = open(
+            os.path.join(TEST_FILES_FOLDER, "atom_paged_2.xml"), "rb"
+        ).read()
         mock.register_uri(
             "GET",
             "http://feed.com/atom_paged_2.xml",
@@ -44,7 +49,12 @@ class XMLFeedsTest(BaseTest):
     def test_item_without_enclosures_list(self, mock):
         """Entries without an enclosures key must not raise KeyError."""
 
-        self._populate_mock(mock, status=200, test_file="rss_single_item_no_enclosure.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_single_item_no_enclosure.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -58,10 +68,17 @@ class XMLFeedsTest(BaseTest):
 
     def test_simple_xml(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+        )
 
         ls = timezone.now()
-        src = Source(name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls)
+        src = Source(
+            name="test1", feed_url=BASE_URL, interval=0, last_success=ls, last_change=ls
+        )
         src.save()
 
         # Read the feed once to get the 1 post  and the etag
@@ -77,7 +94,12 @@ class XMLFeedsTest(BaseTest):
 
     def test_podcast(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="podcast.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="podcast.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -86,7 +108,10 @@ class XMLFeedsTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
-        self.assertEqual(src.description, 'SU: Three nerds discussing tech, Apple, programming, and loosely related matters.')
+        self.assertEqual(
+            src.description,
+            "SU: Three nerds discussing tech, Apple, programming, and loosely related matters.",
+        )
 
         self.assertEqual(src.posts.all()[0].enclosures.count(), 1)
 
@@ -96,7 +121,12 @@ class XMLFeedsTest(BaseTest):
 
     def test_mastodon(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="mastodon.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="mastodon.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -104,13 +134,18 @@ class XMLFeedsTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
-        self.assertEqual(src.description, 'Public posts from @xurble@toot.community')
+        self.assertEqual(src.description, "Public posts from @xurble@toot.community")
 
         self.assertEqual(src.posts.all()[0].enclosures.count(), 1)
 
     def test_media_content(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="media_content.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -125,7 +160,10 @@ class XMLFeedsTest(BaseTest):
 
         enc = post.enclosures.all()[0]
 
-        self.assertEqual(enc.href, "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba.jpeg")
+        self.assertEqual(
+            enc.href,
+            "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba.jpeg",
+        )
         self.assertEqual(enc.description, "This is the alt text.")
 
     def test_keep_old_enclosure(self, mock):
@@ -136,14 +174,24 @@ class XMLFeedsTest(BaseTest):
         reload(utils)
         reload(utils_internal)
 
-        self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="media_content.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
         read_feed(src, output=NullOutput())
 
-        self._populate_mock(mock, status=200, test_file="media_content_changed.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="media_content_changed.xml",
+            content_type="application/rss+xml",
+        )
 
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
@@ -156,7 +204,10 @@ class XMLFeedsTest(BaseTest):
 
         enc = post.current_enclosures.all()[0]
 
-        self.assertEqual(enc.href, "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba_new.jpeg")
+        self.assertEqual(
+            enc.href,
+            "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba_new.jpeg",
+        )
 
     def test_save_json(self, mock):
 
@@ -166,7 +217,12 @@ class XMLFeedsTest(BaseTest):
         reload(utils)
         reload(utils_internal)
 
-        self._populate_mock(mock, status=200, test_file="media_content.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="media_content.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -181,7 +237,12 @@ class XMLFeedsTest(BaseTest):
     def test_sanitize_1(self, mock):
         """Make sure feedparser's sanitization is running."""
 
-        self._populate_mock(mock, status=200, test_file="rss_xhtml_body.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -197,11 +258,16 @@ class XMLFeedsTest(BaseTest):
 
     def test_sanitize_2(self, mock):
         """
-            Another test that the sanitization is going on.  This time we have
-            stolen a test case from the feedparser libarary
+        Another test that the sanitization is going on.  This time we have
+        stolen a test case from the feedparser libarary
         """
 
-        self._populate_mock(mock, status=200, test_file="sanitizer_bad_comment.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="sanitizer_bad_comment.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -215,7 +281,12 @@ class XMLFeedsTest(BaseTest):
 
     def test_sanitize_attrs(self, mock):
 
-        self._populate_mock(mock, status=200, test_file="sanitizer_img_attrs.xml", content_type="application/rss+xml")
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="sanitizer_img_attrs.xml",
+            content_type="application/rss+xml",
+        )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
@@ -233,9 +304,9 @@ class XMLFeedsTest(BaseTest):
         self.assertFalse("hspace=" in body)
 
     def create_source(self, mock, test_name, test_fn):
-        self._populate_mock(mock, status=200,
-                            test_file=test_fn,
-                            content_type="application/rss+xml")
+        self._populate_mock(
+            mock, status=200, test_file=test_fn, content_type="application/rss+xml"
+        )
         src = Source(name=test_name, feed_url=BASE_URL, interval=0)
         src.save()
         # read the feed to update the name

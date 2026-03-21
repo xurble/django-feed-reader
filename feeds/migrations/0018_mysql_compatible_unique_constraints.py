@@ -24,7 +24,6 @@ def backwards_clear_guid_digest(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("feeds", "0017_add_integrity_constraints"),
     ]
@@ -41,7 +40,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="post",
             name="guid_digest",
-            field=models.CharField(blank=True, editable=False, max_length=64, null=True),
+            field=models.CharField(
+                blank=True, editable=False, max_length=64, null=True
+            ),
         ),
         migrations.RunPython(forwards_fill_guid_digest, backwards_clear_guid_digest),
         migrations.AddConstraint(

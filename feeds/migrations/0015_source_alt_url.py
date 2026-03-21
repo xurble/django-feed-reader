@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('feeds', '0014_post_json_source_json'),
+        ("feeds", "0014_post_json_source_json"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='source',
-            name='alt_url',
+            model_name="source",
+            name="alt_url",
             field=models.URLField(blank=True, null=True),
         ),
     ]

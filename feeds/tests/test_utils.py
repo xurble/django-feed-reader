@@ -6,7 +6,6 @@ from feeds.utils_internal import fix_relative
 
 
 class UtilsTest(TestCase):
-
     def test_fix_relative(self):
 
         url = "https://example.com/rss.xml"
@@ -14,7 +13,10 @@ class UtilsTest(TestCase):
 
         html = fix_relative(html, url)
 
-        self.assertEqual(html, "<a href='https://example.com/'><img src='https://example.com/image.jpg'></a>")
+        self.assertEqual(
+            html,
+            "<a href='https://example.com/'><img src='https://example.com/image.jpg'></a>",
+        )
 
     def test_fix_relative_protocol_relative_uses_https(self):
         url = "https://example.com/rss.xml"
