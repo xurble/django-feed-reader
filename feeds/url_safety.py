@@ -52,7 +52,7 @@ def is_safe_http_redirect_target(url: str) -> bool:
         return False
     try:
         parsed = urlparse(url)
-    except Exception:
+    except (TypeError, ValueError):
         return False
     scheme = (parsed.scheme or "").lower()
     if scheme not in ("http", "https"):

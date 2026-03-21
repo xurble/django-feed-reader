@@ -55,51 +55,99 @@ def _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields):
         Enclosure.objects.bulk_create(to_create)
 
 
-def _batch_sync_enclosures_xml(p: Post, e):
-    """Match feedparser entry enclosures to DB; batch update/create/delete."""
-    seen_files = []
-    post_files = e.get("enclosures") or []
+def _xml_entry_enclosure_dicts(e) -> list:
+    """Build feedparser enclosure dicts for an entry (RSS enclosures + deduped media_content)."""
+    post_files = list(e.get("enclosures") or [])
     non_dupes = []
 
     if "media_content" in e:
-        for ee in e["media_content"]:
+        for mc in e["media_content"]:
             if len(e["media_content"]) == 1 and len(e.get("content", [])) == 1:
-                ee["description"] = e["content"][0].get("value")
+                mc["description"] = e["content"][0].get("value")
 
             found = False
             for ff in post_files:
-                if ff["href"] == ee["url"]:
+                if ff.get("href") == mc.get("url"):
                     found = True
                     break
             if not found:
-                non_dupes.append(ee)
+                non_dupes.append(mc)
 
         post_files += non_dupes
 
+    return post_files
+
+
+def _normalized_enclosure_items_xml(post_files: list) -> list:
+    items = []
+    for pe in post_files:
+        try:
+            href = pe["href"] if "href" in pe else pe["url"]
+        except (KeyError, TypeError):
+            continue
+        size_field = "length" if "length" in pe else "filesize"
+        try:
+            byte_length = int(pe[size_field])
+        except (KeyError, ValueError, TypeError):
+            byte_length = 0
+        item = {"href": href, "length": byte_length}
+        if "type" in pe:
+            item["type"] = pe["type"]
+        if "medium" in pe:
+            item["medium"] = pe["medium"]
+        if "description" in pe:
+            item["description"] = pe["description"][:512]
+        items.append(item)
+    return items
+
+
+def _normalized_enclosure_items_json(e) -> list:
+    items = []
+    for pe in e.get("attachments") or []:
+        try:
+            href = pe["url"]
+        except (KeyError, TypeError):
+            continue
+        try:
+            byte_length = int(pe["size_in_bytes"])
+        except (KeyError, ValueError, TypeError):
+            byte_length = 0
+        item = {"href": href, "length": byte_length}
+        if "mime_type" in pe:
+            item["type"] = pe["mime_type"]
+        items.append(item)
+    return items
+
+
+def _batch_sync_enclosures_normalized(
+    p: Post,
+    items: list,
+    *,
+    type_default_update: str,
+    update_fields: list,
+    with_medium_description: bool,
+):
+    """Match normalized feed attachment dicts to DB enclosures; batch update/create/delete."""
+    seen_files = []
     to_update = []
     delete_ids = []
     to_create = []
 
     for ee in list(p.enclosures.all()):
         found_enclosure = False
-        for pe in post_files:
-            href = "href" if "href" in pe else "url"
-            length_key = "length" if "length" in pe else "filesize"
-
-            if pe[href] == ee.href and ee.href not in seen_files:
+        for pe in items:
+            if pe["href"] == ee.href and ee.href not in seen_files:
                 found_enclosure = True
-                try:
-                    ee.length = int(pe[length_key])
-                except Exception:
-                    ee.length = 0
-                try:
+                ee.length = pe["length"]
+                if "type" in pe:
                     ee.type = pe["type"]
-                except Exception:
-                    ee.type = "unknown"
-                if "medium" in pe:
-                    ee.medium = pe["medium"]
-                if "description" in pe:
-                    ee.description = pe["description"][:512]
+                else:
+                    ee.type = type_default_update
+                if with_medium_description:
+                    if "medium" in pe:
+                        ee.medium = pe["medium"]
+                    if "description" in pe:
+                        ee.description = pe["description"][:512]
                 to_update.append(ee)
                 break
         if not found_enclosure:
@@ -110,90 +158,45 @@ def _batch_sync_enclosures_xml(p: Post, e):
                 delete_ids.append(ee.pk)
         seen_files.append(ee.href)
 
-    for pe in post_files:
-        href = "href" if "href" in pe else "url"
-        length_key = "length" if "length" in pe else "filesize"
+    for pe in items:
         try:
-            if pe[href] not in seen_files:
-                try:
-                    blen = int(pe[length_key])
-                except Exception:
-                    blen = 0
-                try:
-                    typ = pe["type"]
-                except Exception:
-                    typ = "audio/mpeg"
-                ne = Enclosure(post=p, href=pe[href], length=blen, type=typ)
-                if "medium" in pe:
-                    ne.medium = pe["medium"]
-                if "description" in pe:
-                    ne.description = pe["description"][:512]
+            if pe["href"] not in seen_files:
+                enc_type = pe["type"] if "type" in pe else "audio/mpeg"
+                ne = Enclosure(post=p, href=pe["href"], length=pe["length"], type=enc_type)
+                if with_medium_description:
+                    if "medium" in pe:
+                        ne.medium = pe["medium"]
+                    if "description" in pe:
+                        ne.description = pe["description"][:512]
                 to_create.append(ne)
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             pass
 
-    _commit_enclosure_batch(
-        delete_ids,
-        to_update,
-        to_create,
-        ["length", "type", "medium", "description", "is_current"],
+    _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields)
+
+
+def _batch_sync_enclosures_xml(p: Post, e):
+    """Match feedparser entry enclosures to DB; batch update/create/delete."""
+    post_files = _xml_entry_enclosure_dicts(e)
+    items = _normalized_enclosure_items_xml(post_files)
+    _batch_sync_enclosures_normalized(
+        p,
+        items,
+        type_default_update="unknown",
+        update_fields=["length", "type", "medium", "description", "is_current"],
+        with_medium_description=True,
     )
 
 
 def _batch_sync_enclosures_json(p: Post, e):
     """Match JSON feed item attachments to DB; batch update/create/delete."""
-    seen_files = []
-    to_update = []
-    delete_ids = []
-    to_create = []
-
-    for ee in list(p.enclosures.all()):
-        found_enclosure = False
-        if "attachments" in e:
-            for pe in e["attachments"]:
-                if pe["url"] == ee.href and ee.href not in seen_files:
-                    found_enclosure = True
-                    try:
-                        ee.length = int(pe["size_in_bytes"])
-                    except Exception:
-                        ee.length = 0
-                    try:
-                        ee.type = pe["mime_type"]
-                    except Exception:
-                        ee.type = "audio/mpeg"
-                    to_update.append(ee)
-                    break
-        if not found_enclosure:
-            if KEEP_OLD_ENCLOSURES:
-                ee.is_current = False
-                to_update.append(ee)
-            else:
-                delete_ids.append(ee.pk)
-        seen_files.append(ee.href)
-
-    if "attachments" in e:
-        for pe in e["attachments"]:
-            try:
-                if pe["url"] not in seen_files:
-                    try:
-                        blen = int(pe["size_in_bytes"])
-                    except Exception:
-                        blen = 0
-                    try:
-                        typ = pe["mime_type"]
-                    except Exception:
-                        typ = "audio/mpeg"
-                    to_create.append(
-                        Enclosure(post=p, href=pe["url"], length=blen, type=typ)
-                    )
-            except Exception:
-                pass
-
-    _commit_enclosure_batch(
-        delete_ids,
-        to_update,
-        to_create,
-        ["length", "type", "is_current"],
+    items = _normalized_enclosure_items_json(e)
+    _batch_sync_enclosures_normalized(
+        p,
+        items,
+        type_default_update="audio/mpeg",
+        update_fields=["length", "type", "is_current"],
+        with_medium_description=False,
     )
 
 
@@ -211,7 +214,7 @@ def _customize_sanitizer(fp):
         try:
             if item in fp.sanitizer._HTMLSanitizer.acceptable_attributes:
                 fp.sanitizer._HTMLSanitizer.acceptable_attributes.remove(item)
-        except Exception:
+        except (AttributeError, KeyError, TypeError):
             logging.debug("Could not remove {}".format(item))
 
 
@@ -239,7 +242,7 @@ def fix_relative(html: str, url: str):
         html = html.replace("href='/", "href='%s/" % base)
         html = html.replace('href="/', 'href="%s/' % base)
 
-    except Exception:
+    except (AttributeError, TypeError, IndexError):
         pass
 
     return html
@@ -338,7 +341,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
             source_feed.last_result = "Feed is empty"
             ok = False
 
-    except Exception:
+    except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
         source_feed.last_result = "Feed Parse Error"
         entries = []
         ok = False
@@ -517,7 +520,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
 
         source_feed.save(update_fields=["last_success", "last_result"])
 
-    except Exception:
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         source_feed.last_result = "Feed Parse Error"
         entries = []
         source_feed.interval += 120

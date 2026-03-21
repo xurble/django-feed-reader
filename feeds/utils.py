@@ -2,7 +2,7 @@
 
 import datetime
 import logging
-from typing import TextIO, List
+from typing import TextIO, List, Tuple, Optional
 from sys import stdout
 
 
@@ -19,13 +19,10 @@ from feeds.url_safety import (
     resolve_feed_redirect_location,
 )
 from feeds.utils_internal import (
+    VERIFY_HTTPS,
     get_agent,
     parse_feed,
 )
-
-VERIFY_HTTPS = True
-if hasattr(settings, "FEEDS_VERIFY_HTTPS"):
-    VERIFY_HTTPS = settings.FEEDS_VERIFY_HTTPS
 
 DRIPFEED_KEY = None
 if hasattr(settings, "FEEDS_DRIPFEED_KEY"):
@@ -59,66 +56,146 @@ def update_feeds(max_feeds: int = 3, output: TextIO = stdout):
         read_feed(src, output)
 
 
-def read_feed(source_feed: Source, output: TextIO = stdout):
-    """Fetches a specific feed and stores the output.
-
-    :param source_feed: The Source object to fetch.
-    :type source_feed: Source
-
-    :param output: A file-like object where logging messages will be written (default stdout).
-    :type output: TextIO
-    """
-    old_interval = source_feed.interval
-
-    was302 = False
-
-    source_feed.last_polled = timezone.now()
-
-    agent = get_agent(source_feed)
-
-    headers = {"User-Agent": agent}  # identify ourselves
-
+def _read_feed_resolve_url(source_feed: Source) -> str:
     feed_url = source_feed.feed_url
     if source_feed.is_cloudflare:
         if source_feed.alt_url:
             feed_url = source_feed.alt_url
-        else:
-            if CLOUDFLARE_WORKER:
-                feed_url = f"{CLOUDFLARE_WORKER}/read/?target={feed_url}"
+        elif CLOUDFLARE_WORKER:
+            feed_url = f"{CLOUDFLARE_WORKER}/read/?target={feed_url}"
+    return feed_url
 
-    if source_feed.etag:
-        headers["If-None-Match"] = str(source_feed.etag)
-    if source_feed.last_modified:
-        headers["If-Modified-Since"] = str(source_feed.last_modified)
 
-    output.write("\nFetching %s" % feed_url)
-
-    ret = None
+def _read_feed_initial_get(source_feed: Source, feed_url: str, headers: dict, output: TextIO) -> Optional[requests.Response]:
     try:
-        ret = requests.get(feed_url, headers=headers, verify=VERIFY_HTTPS, allow_redirects=False, timeout=20)
+        ret = requests.get(
+            feed_url,
+            headers=headers,
+            verify=VERIFY_HTTPS,
+            allow_redirects=False,
+            timeout=20,
+        )
         source_feed.status_code = ret.status_code
         source_feed.last_result = "Unhandled Case"
         output.write(str(ret))
-    except Exception as ex:
+        return ret
+    except (requests.RequestException, OSError) as ex:
         source_feed.last_result = ("Fetch error:" + str(ex))[:255]
         source_feed.status_code = 0
         output.write("\nFetch error: " + str(ex))
+        return None
+
+
+def _read_feed_apply_permanent_redirect(source_feed: Source, ret: requests.Response) -> None:
+    if "Location" not in ret.headers:
+        source_feed.last_result = "Feed has moved but no location provided"
+        return
+    raw_location = ret.headers["Location"]
+    resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
+    if not resolved or not is_safe_http_redirect_target(resolved):
+        source_feed.last_result = "Unsafe or invalid redirect URL"
+        return
+    source_feed.feed_url = resolved
+    source_feed.last_result = "Moved"
+    source_feed.save(update_fields=["feed_url", "last_result"])
+
+
+def _read_feed_follow_temporary_redirect(
+    source_feed: Source,
+    ret: requests.Response,
+    output: TextIO,
+    headers: dict,
+) -> requests.Response:
+    new_url = ""
+    try:
+        raw_location = ret.headers["Location"]
+        resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
+        if not resolved or not is_safe_http_redirect_target(resolved):
+            source_feed.last_result = "Unsafe or invalid redirect URL"
+            source_feed.interval += 60
+            return ret
+        new_url = resolved
+        ret = requests.get(
+            new_url,
+            headers=headers,
+            allow_redirects=True,
+            timeout=20,
+            verify=VERIFY_HTTPS,
+        )
+        source_feed.status_code = ret.status_code
+        source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
+
+        if source_feed.last_302_url == new_url:
+            td = timezone.now() - source_feed.last_302_start
+            if td.days > 60:
+                source_feed.feed_url = new_url
+                source_feed.last_302_url = " "
+                source_feed.last_302_start = None
+                source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
+
+                source_feed.save(
+                    update_fields=[
+                        "feed_url",
+                        "last_result",
+                        "last_302_url",
+                        "last_302_start",
+                    ]
+                )
+
+            else:
+                source_feed.last_result = (
+                    "Temporary Redirect to "
+                    + new_url
+                    + " since "
+                    + source_feed.last_302_start.strftime("%d %B")
+                )[:255]
+
+        else:
+            source_feed.last_302_url = new_url
+            source_feed.last_302_start = timezone.now()
+
+            source_feed.last_result = (
+                "Temporary Redirect to "
+                + new_url
+                + " since "
+                + source_feed.last_302_start.strftime("%d %B")
+            )[:255]
+
+    except (requests.RequestException, KeyError, OSError) as ex:
+        source_feed.last_result = (
+            "Failed Redirection to " + new_url + " " + str(ex)
+        )[:255]
+        source_feed.interval += 60
+
+    return ret
+
+
+def _read_feed_process_http_response(
+    source_feed: Source,
+    ret: Optional[requests.Response],
+    output: TextIO,
+    headers: dict,
+) -> Tuple[Optional[requests.Response], bool]:
+    """Apply status-code handling; return the response to use for body parsing and whether a 302 path ran."""
+    was302 = False
 
     if ret is None or source_feed.status_code == 0:
         source_feed.interval += 120
-    elif ret.status_code < 200 or ret.status_code >= 500:
-        # errors, impossible return codes
+        return ret, was302
+
+    if ret.status_code < 200 or ret.status_code >= 500:
         source_feed.interval += 120
         source_feed.last_result = "Server error fetching feed (%d)" % ret.status_code
     elif ret.status_code == 404:
-        # not found
         source_feed.interval += 120
         source_feed.last_result = "The feed could not be found"
-    elif ret.status_code == 410:  # Gone
+    elif ret.status_code == 410:
         source_feed.last_result = "Feed has gone away and says it isn't coming back."
         source_feed.live = False
-    elif ret.status_code == 403:  # Forbidden
-        if "Cloudflare" in ret.text or ("Server" in ret.headers and "cloudflare" in ret.headers["Server"]):
+    elif ret.status_code == 403:
+        if "Cloudflare" in ret.text or (
+            "Server" in ret.headers and "cloudflare" in ret.headers["Server"]
+        ):
             source_feed.is_cloudflare = True
             source_feed.last_result = "Blocked by Cloudflare (grr)"
             if DRIPFEED_KEY:
@@ -133,135 +210,146 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
             source_feed.live = False
 
     elif ret.status_code >= 400 and ret.status_code < 500:
-        # treat as bad request
         source_feed.live = False
         source_feed.last_result = "Bad request (%d)" % ret.status_code
     elif ret.status_code == 304:
-        # not modified
         source_feed.interval += 10
         source_feed.last_result = "Not modified"
         source_feed.last_success = timezone.now()
 
-        # Clear stale validators if the feed has not delivered new content for a while
-        # (304 means unchanged; compare against last_change, not last_success set above).
         if source_feed.last_change and (timezone.now() - source_feed.last_change).days > 7:
             source_feed.last_result = "Clearing etag/last modified due to lack of changes"
             source_feed.etag = None
             source_feed.last_modified = None
 
-    elif ret.status_code == 301 or ret.status_code == 308:  # permenant redirect
-        new_url = ""
-        try:
-            if "Location" in ret.headers:
-                raw_location = ret.headers["Location"]
-                resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
-                if not resolved or not is_safe_http_redirect_target(resolved):
-                    source_feed.last_result = "Unsafe or invalid redirect URL"
-                else:
-                    new_url = resolved
-                    source_feed.feed_url = new_url
-                    source_feed.last_result = "Moved"
-                    source_feed.save(update_fields=["feed_url", "last_result"])
-
-            else:
-                source_feed.last_result = "Feed has moved but no location provided"
-        except Exception:
-            output.write("\nError redirecting.")
-            source_feed.last_result = ("Error redirecting feed to " + new_url)[:255]
-            pass
-    elif ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307:  # Temporary redirect
-        new_url = ""
+    elif ret.status_code == 301 or ret.status_code == 308:
+        _read_feed_apply_permanent_redirect(source_feed, ret)
+    elif ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307:
         was302 = True
-        try:
-            raw_location = ret.headers["Location"]
-            resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
-            if not resolved or not is_safe_http_redirect_target(resolved):
-                source_feed.last_result = "Unsafe or invalid redirect URL"
-                source_feed.interval += 60
-            else:
-                new_url = resolved
-                ret = requests.get(new_url, headers=headers, allow_redirects=True, timeout=20, verify=VERIFY_HTTPS)
-                source_feed.status_code = ret.status_code
-                source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
+        ret = _read_feed_follow_temporary_redirect(source_feed, ret, output, headers)
 
-                if source_feed.last_302_url == new_url:
-                    # this is where we 302'd to last time
-                    td = timezone.now() - source_feed.last_302_start
-                    if td.days > 60:
-                        source_feed.feed_url = new_url
-                        source_feed.last_302_url = " "
-                        source_feed.last_302_start = None
-                        source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
+    return ret, was302
 
-                        source_feed.save(update_fields=["feed_url", "last_result", "last_302_url", "last_302_start"])
 
-                    else:
-                        source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
+def _read_feed_store_validator_headers(
+    source_feed: Source, ret: requests.Response, was302: bool
+) -> None:
+    if was302:
+        source_feed.etag = None
+        source_feed.last_modified = None
+    else:
+        source_feed.etag = ret.headers.get("etag")
+        if source_feed.etag is not None:
+            source_feed.etag = str(source_feed.etag)
+        source_feed.last_modified = ret.headers.get("Last-Modified")
+        if source_feed.last_modified is not None:
+            source_feed.last_modified = str(source_feed.last_modified)
 
-                else:
-                    source_feed.last_302_url = new_url
-                    source_feed.last_302_start = timezone.now()
 
-                    source_feed.last_result = ("Temporary Redirect to " + new_url + " since " + source_feed.last_302_start.strftime("%d %B"))[:255]
+def _read_feed_process_success_body(
+    source_feed: Source,
+    ret: requests.Response,
+    output: TextIO,
+    was302: bool,
+) -> None:
+    ok = True
+    changed = False
 
-        except Exception as ex:
-            source_feed.last_result = ("Failed Redirection to " + new_url + " " + str(ex))[:255]
-            source_feed.interval += 60
+    _read_feed_store_validator_headers(source_feed, ret, was302)
 
-    # NOT ELIF, WE HAVE TO START THE IF AGAIN TO COPE WTIH 302
-    if ret and ret.status_code >= 200 and ret.status_code < 300:  # now we are not following redirects 302,303 and so forth are going to fail here, but what the hell :)
+    output.write(
+        "\netag:%s\nLast Mod:%s" % (source_feed.etag, source_feed.last_modified)
+    )
 
-        # great!
-        ok = True
-        changed = False
+    content_type = "Not Set"
+    if "Content-Type" in ret.headers:
+        content_type = ret.headers["Content-Type"]
 
-        if was302:
-            source_feed.etag = None
-            source_feed.last_modified = None
-        else:
-            try:
-                source_feed.etag = ret.headers["etag"]
-            except Exception:
-                source_feed.etag = None
-            try:
-                source_feed.last_modified = ret.headers["Last-Modified"]
-            except Exception:
-                source_feed.last_modified = None
+    (ok, changed) = parse_feed(
+        source_feed=source_feed,
+        feed_body=ret.content,
+        content_type=content_type,
+        output=output,
+    )
 
-        output.write("\netag:%s\nLast Mod:%s" % (source_feed.etag, source_feed.last_modified))
+    if ok and changed:
+        source_feed.interval /= 2
+        source_feed.last_result = " OK (updated)"
+        source_feed.last_change = timezone.now()
 
-        content_type = "Not Set"
-        if "Content-Type" in ret.headers:
-            content_type = ret.headers["Content-Type"]
+    elif ok:
+        source_feed.last_result = " OK"
+        source_feed.interval += 20
+    else:
+        source_feed.interval += 120
 
-        (ok, changed) = parse_feed(source_feed=source_feed, feed_body=ret.content, content_type=content_type, output=output)
 
-        if ok and changed:
-            source_feed.interval /= 2
-            source_feed.last_result = " OK (updated)"  # and temporary redirects
-            source_feed.last_change = timezone.now()
-
-        elif ok:
-            source_feed.last_result = " OK"
-            source_feed.interval += 20  # we slow down feeds a little more that don't send headers we can use
-        else:  # not OK
-            source_feed.interval += 120
-
+def _read_feed_finalize_interval_and_save(
+    source_feed: Source, old_interval: int, output: TextIO
+) -> None:
     if source_feed.interval < 60:
-        source_feed.interval = 60  # no less than 1 hour
+        source_feed.interval = 60
     if source_feed.interval > (60 * 24):
-        source_feed.interval = (60 * 24)  # no more than a day
+        source_feed.interval = 60 * 24
 
-    output.write("\nUpdating source_feed.interval from %d to %d" % (old_interval, source_feed.interval))
+    output.write(
+        "\nUpdating source_feed.interval from %d to %d"
+        % (old_interval, source_feed.interval)
+    )
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
-    source_feed.save(update_fields=[
-                "due_poll", "interval", "last_result",
-                "last_modified", "etag", "last_302_start",
-                "last_302_url", "last_success", "live",
-                "status_code", "max_index", "is_cloudflare",
-                "last_change", "alt_url"
-            ])
+    source_feed.save(
+        update_fields=[
+            "due_poll",
+            "interval",
+            "last_result",
+            "last_modified",
+            "etag",
+            "last_302_start",
+            "last_302_url",
+            "last_success",
+            "live",
+            "status_code",
+            "max_index",
+            "is_cloudflare",
+            "last_change",
+            "alt_url",
+        ]
+    )
+
+
+def read_feed(source_feed: Source, output: TextIO = stdout):
+    """Fetches a specific feed and stores the output.
+
+    :param source_feed: The Source object to fetch.
+    :type source_feed: Source
+
+    :param output: A file-like object where logging messages will be written (default stdout).
+    :type output: TextIO
+    """
+    old_interval = source_feed.interval
+
+    source_feed.last_polled = timezone.now()
+
+    agent = get_agent(source_feed)
+    headers = {"User-Agent": agent}  # identify ourselves
+
+    feed_url = _read_feed_resolve_url(source_feed)
+
+    if source_feed.etag:
+        headers["If-None-Match"] = str(source_feed.etag)
+    if source_feed.last_modified:
+        headers["If-Modified-Since"] = str(source_feed.last_modified)
+
+    output.write("\nFetching %s" % feed_url)
+
+    ret = _read_feed_initial_get(source_feed, feed_url, headers, output)
+    ret, was302 = _read_feed_process_http_response(source_feed, ret, output, headers)
+
+    if ret and ret.status_code >= 200 and ret.status_code < 300:
+        _read_feed_process_success_body(source_feed, ret, output, was302)
+
+    _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
 
 
 def test_feed(source_feed: Source, cache: bool = False, output: TextIO = stdout) -> bool:
@@ -299,7 +387,13 @@ def test_feed(source_feed: Source, cache: bool = False, output: TextIO = stdout)
     output.write(str(headers))
 
     try:
-        ret = requests.get(source_feed.feed_url, headers=headers, allow_redirects=False, verify=VERIFY_HTTPS, timeout=20)
+        ret = requests.get(
+            source_feed.feed_url,
+            headers=headers,
+            allow_redirects=False,
+            verify=VERIFY_HTTPS,
+            timeout=20,
+        )
 
         output.write(str(ret))
         output.write(ret.text)
@@ -307,7 +401,7 @@ def test_feed(source_feed: Source, cache: bool = False, output: TextIO = stdout)
         output.write(f"\nTest result: {ret.ok}")
         return ret.ok
 
-    except Exception as ex:
+    except (requests.RequestException, OSError) as ex:
         logger.error(ex)
         output.write(f"\nError: {ex}")
     return False

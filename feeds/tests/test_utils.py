@@ -1,5 +1,7 @@
 from django.test import TestCase
 
+from feeds import utils as feeds_utils
+from feeds import utils_internal
 from feeds.utils_internal import fix_relative
 
 
@@ -20,3 +22,12 @@ class UtilsTest(TestCase):
         html = fix_relative(html, url)
         self.assertIn("https://cdn.example.org", html)
         self.assertNotIn("http://cdn.example.org", html)
+
+    def test_fix_relative_non_string_url_returns_html_unchanged(self):
+        """Bad base URL must not crash sanitization; body is returned as-is."""
+        html = "<p>x</p>"
+        self.assertEqual(fix_relative(html, None), html)
+
+    def test_verify_https_public_module_reexports_internal(self):
+        """Avoid duplicating FEEDS_VERIFY_HTTPS handling in two modules."""
+        self.assertIs(feeds_utils.VERIFY_HTTPS, utils_internal.VERIFY_HTTPS)
