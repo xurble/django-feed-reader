@@ -1,0 +1,15 @@
+{
+    "version": "https://jsonfeed.org/version/1",
+    "title": "Expired Feed",
+    "home_page_url": "https://example.org/",
+    "feed_url": "https://example.org/feed.json",
+    "expired": true,
+    "items": [
+        {
+            "id": "1",
+            "title": "last post",
+            "content_text": "This feed is done.",
+            "url": "https://example.org/last-post"
+        }
+    ]
+}

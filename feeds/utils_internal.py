@@ -463,13 +463,13 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             # for now source_feed.interval to max
             source_feed.interval = (24*3*60)
             source_feed.last_result = "This feed has expired"
-            return (False, False, source_feed.interval)
+            return (False, False)
 
         try:
             source_feed.site_url = f["home_page_url"]
             source_feed.name = f["title"]
 
-            source_feed.save(update_fields=["site_url", "title"])
+            source_feed.save(update_fields=["site_url", "name"])
 
         except Exception:
             pass
@@ -493,7 +493,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
         try:
             if "icon" in f:
                 source_feed.image_url = f["icon"]
-                source_feed.save(update_fields=["icon"])
+                source_feed.save(update_fields=["image_url"])
         except Exception:
             pass
 

@@ -187,7 +187,7 @@ class Source(models.Model):
         if newest_first:
             return list(self.posts.filter(index__gt=self.last_read).order_by("-created"))
         else:
-            return list(self.post.filter(index__gt=self.last_read).order_by("created"))
+            return list(self.posts.filter(index__gt=self.last_read).order_by("created"))
 
     def get_paginated_posts(self, page: int, newest_first: bool = True, posts_per_page: int = 20):
         """Get a posts from the feed a page at a time
@@ -297,7 +297,6 @@ class Post(models.Model):
 
     @property
     def title_url_encoded(self):
-        # Why does this even exist?
         try:
             ret = urlencode({"X": self.title})
             if len(ret) > 2:
@@ -305,6 +304,7 @@ class Post(models.Model):
         except Exception:
             logging.info("Failed to url encode title of post {}".format(self.id))
             ret = ""
+        return ret
 
     def __str__(self):
         return "%s: post %d, %s" % (self.source.display_name, self.index, self.title)

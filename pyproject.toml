@@ -1,4 +1,4 @@
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
 pythonpath = ["."]
-python_files = ["test_*.py", "tests.py"]
+testpaths = ["feeds/tests"]
