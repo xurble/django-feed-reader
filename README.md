@@ -1,147 +1,302 @@
 # Django Feed Reader
 
-This is a simple Django module to allow you subscribe to RSS (and other) feeds.
+`django-feed-reader` is a reusable Django app for subscribing to, fetching, and storing RSS, Atom, and JSON Feed sources.
 
-This app has no UI, it just reads and stores the feeds for you to use as you see fit.
+It is designed as a backend library, not a complete reader application. It gives you Django models, polling utilities, admin integration, and read/unread helpers so you can build your own UI, APIs, and workflows on top.
 
-This app builds on top of the FeedParser library to provide feed management, storage, scheduling etc.
+## What it provides
 
-## Features
+- RSS, Atom, and JSON Feed parsing
+- Feed storage in Django models
+- Automatic polling intervals based on feed activity
+- Feed entry and enclosure persistence
+- Single-user and multi-user read/unread tracking
+- Optional raw JSON storage for uncommon feed attributes
+- Optional Cloudflare workarounds via Dripfeed or a worker URL
+- Django admin registrations for the core models
 
-- Consumes RSS, Atom and JSONFeed feeds.
-- Parses feeds liberally to try and accommodate simple errors.
-- Will attempt to bypass Cloudflare protection of feeds
-- Supports enclosure (podcast) discovery
-- Automatic feed scheduling based on frequency of updates
+## Requirements
+
+- Python 3
+- Django 3.2+
 
 ## Installation
 
-`django-feed-reader` is written in Python 3 and supports Django 3.2+.
+Install the package:
 
-- `pip install django-feed-reader`
-- Add `feeds` to your `INSTALLED_APPS`
-- Setup some values in `settings.py` so that your feed reader politely announces itself to servers
-  - Set `FEEDS_USER_AGENT` to the name and (optionally version) of your service e.g. `"ExampleFeeder/1.2"`
-  - Set `FEEDS_SERVER` to preferred web address of your service so that feed hosts can locate you if required e.g. `https://example.com`
-- Setup a mechanism to periodically refresh the feeds (see below)
+```bash
+pip install django-feed-reader
+```
 
-### Development / running tests
+Add `feeds` to `INSTALLED_APPS`:
 
-From a checkout, install test dependencies and run the suite:
+```python
+INSTALLED_APPS = [
+    # ...
+    "feeds",
+]
+```
+
+Run migrations:
+
+```bash
+python manage.py migrate
+```
+
+Set at least the polite-identification settings in your Django settings:
+
+```python
+FEEDS_USER_AGENT = "ExampleReader/1.0"
+FEEDS_SERVER = "https://example.com"
+```
+
+`FEEDS_USER_AGENT` is sent on outbound feed requests. `FEEDS_SERVER` is included in that user agent string so feed owners can identify your service.
+
+## Quick start
+
+Create a feed source:
+
+```python
+from feeds.models import Source
+
+source = Source.objects.create(
+    feed_url="https://example.com/feed.xml",
+)
+```
+
+Fetch it immediately:
+
+```python
+from feeds.utils import read_feed
+
+read_feed(source)
+source.refresh_from_db()
+```
+
+Inspect the results:
+
+```python
+source.name
+source.description
+source.posts.count()
+source.posts.order_by("-created")[:10]
+```
+
+## Core models
+
+### `Source`
+
+Represents a single feed subscription.
+
+Useful fields include:
+
+- `feed_url`: the URL fetched by the poller
+- `site_url`: the feed's corresponding website, when available
+- `name`: feed title
+- `description`: feed description / summary
+- `image_url`: feed icon or image
+- `last_result`: human-readable result of the last fetch
+- `status_code`: last HTTP status code seen
+- `interval`: next polling interval in minutes
+- `live`: whether the source should still be actively polled
+
+Useful helpers include:
+
+- `unread_count`
+- `get_unread_posts()`
+- `get_paginated_posts()`
+- `mark_read()`
+
+### `Post`
+
+Represents one item / entry from a feed.
+
+Important fields include:
+
+- `title`
+- `body`
+- `link`
+- `author`
+- `created`
+- `guid`
+- `image_url`
+
+### `Enclosure`
+
+Represents media associated with a post, such as podcast audio or image attachments.
+
+Useful helpers include:
+
+- `is_image`
+- `is_audio`
+- `is_video`
+
+### `Subscription`
+
+Represents a user following a `Source`.
+
+Use `Subscription` when you need per-user read/unread tracking or folder-like grouping of sources.
+
+## Public utility functions
+
+The main public API lives in `feeds.utils`.
+
+### `read_feed(source)`
+
+Fetches one `Source`, parses it, and persists any changes.
+
+Use this when:
+
+- you want to fetch a feed immediately after creating it
+- you are debugging a specific feed
+- you need one-off refresh behavior
+
+### `update_feeds(max_feeds=3)`
+
+Polls all due `Source` rows, ordered by `due_poll`, up to `max_feeds`.
+
+Use this from cron, Celery, or another scheduled task runner.
+
+### `test_feed(source, cache=False)`
+
+Performs a simple reachability test for a specific feed URL without going through the full persistence flow.
+
+### Subscription helpers
+
+- `get_subscription_list_for_user(user)`
+- `get_unread_subscription_list_for_user(user)`
+
+These help build folder trees and unread views for multi-user applications.
+
+## Polling behavior
+
+The library automatically adjusts polling frequency based on whether a feed changes.
+
+- Fastest poll frequency: 1 hour
+- Slowest poll frequency: 24 hours
+
+Feeds that change frequently are polled more often. Feeds that remain unchanged are polled less often.
+
+The typical pattern is to run the poller every 5 to 10 minutes and let the library decide which sources are actually due.
+
+### Using the management command
+
+The app includes:
+
+```bash
+python manage.py refreshfeeds
+```
+
+That command calls `update_feeds(30)`.
+
+### Using Celery
+
+```python
+from celery import shared_task
+from feeds.utils import update_feeds
+
+
+@shared_task
+def refresh_feed_batch():
+    update_feeds(30)
+```
+
+## Read/unread tracking
+
+There are two supported patterns.
+
+### Single-user installations
+
+If your project is effectively for one user, you can use the helper methods directly on `Source`.
+
+```python
+source.unread_count
+source.get_unread_posts()
+source.mark_read()
+```
+
+### Multi-user installations
+
+If multiple users can follow the same feed, create `Subscription` rows.
+
+```python
+from django.contrib.auth import get_user_model
+from feeds.models import Source, Subscription
+
+User = get_user_model()
+
+user = User.objects.get(username="alice")
+source = Source.objects.get(feed_url="https://example.com/feed.xml")
+
+subscription = Subscription.objects.create(
+    user=user,
+    source=source,
+    name=source.display_name,
+)
+```
+
+You can also create folder-like subscriptions by setting `source=None` and using `parent` relationships.
+
+## Settings
+
+### Required or strongly recommended
+
+- `FEEDS_USER_AGENT`
+  - Example: `"ExampleReader/1.0"`
+- `FEEDS_SERVER`
+  - Example: `"https://example.com"`
+
+If `FEEDS_SERVER` is not set, the library will derive a default from `ALLOWED_HOSTS` where possible.
+
+### Optional
+
+- `FEEDS_VERIFY_HTTPS` (default: `True`)
+  - Set to `False` only if you deliberately want to allow invalid HTTPS certificates.
+
+- `FEEDS_KEEP_OLD_ENCLOSURES` (default: `False`)
+  - If a feed changes enclosure URLs over time, keep the old ones and mark them with `is_current=False`.
+
+- `FEEDS_SAVE_JSON` (default: `False`)
+  - Store raw feed/parser data in the `json` fields on `Source` and `Post`.
+  - Useful when you want access to custom or uncommon feed attributes.
+  - Increases database usage.
+
+- `FEEDS_DRIPFEED_KEY` (default: unset)
+  - If present, Cloudflare-blocked feeds can be retried via [Dripfeed](https://dripfeed.app).
+
+- `FEEDS_CLOUDFLARE_WORKER` (default: unset)
+  - Optional alternate fetch endpoint used for Cloudflare-blocked feeds.
+
+## Cloudflare support
+
+When a feed responds in a way that looks like Cloudflare protection, the library can:
+
+- mark the source as Cloudflare-protected
+- retry through Dripfeed if `FEEDS_DRIPFEED_KEY` is configured
+- use `FEEDS_CLOUDFLARE_WORKER` if configured
+
+## What this library does not do
+
+- It does not ship a reader UI
+- It does not define URLs or views for your application
+- It does not download enclosure files for you
+- It does not provide a complete end-user feed reader product
+
+## Development
+
+From a checkout:
 
 ```bash
 pip install -e ".[test]"
 pytest
 ```
 
-### Optional Settings
+## Notes for integrators
 
-- **`FEEDS_VERIFY_HTTPS`** (Default `True`)
-  - Older versions of this library did not verify https connections when fetching feeds.
-    Set this to `False` to revert to the old behaviour.
-- **`KEEP_OLD_ENCLOSURES`** (Default `False`)
-  - Some feeds (particularly podcasts with Dynamic Ad Insertion) will change their enclosure
-    urls between reads. By default, old enclosures are deleted and replaced with new ones.
-    Set this to true, to retain old enclosures — they will have their `is_current` flag
-    set to `False`
-- **`SAVE_JSON`** (Default `False`)
-  - If set, Sources and Posts will store a JSON representation of the all the data retrieved
-    from the feed so that uncommon or custom attributes can be retrieved. Caution — this will
-    dramatically increase the amount of space used in your database.
-- **`DRIPFEED_KEY`** (Default `None`)
-  - If set to a valid Dripfeed API Key, then feeds that are blocked by Cloudflare will
-    be automatically polled via [Dripfeed](https://dripfeed.app) instead.
+- `refreshfeeds` is intentionally small and fixed to `update_feeds(30)`. If you need different batching behavior, call `update_feeds()` from your own scheduler.
+- Redirect targets are validated before being followed or persisted.
+- The app stores feed metadata and parsed content, but you remain responsible for presentation and any downstream content policies in your own application.
 
-## Basic Models
+## Documentation
 
-A feed is represented by a `Source` object which has (among other things) a `feed_url`.
-
-To start reading a feed, simply create a new `Source` with the desired `feed_url`
-
-`Source` objects have `Post` children which contain the content.
-
-A `Post` may have `Enclosure` (or more) which is what podcasts use to send their audio.
-The app does not download enclosures, if you want to do that you will need to do that in your project
-using the url provided.
-
-## Refreshing feeds
-
-To conserve resources with large feed lists, the module will adjust how often it polls feeds
-based on how often they are updated. The fastest it will poll a feed is every hour. The
-slowest it will poll is every 24 hours.
-
-Sources that don't get updated are polled progressively more slowly until the 24 hour limit is
-reached. When a feed changes, its polling frequency increases.
-
-You will need to decide how and when to run the poller. When the poller runs, it checks all
-feeds that are currently due. The ideal frequency to run it is every 5 - 10 minutes.
-
-### Polling with cron
-
-Set up a job that calls `python manage.py refreshfeeds` on your desired schedule.
-
-Be careful to ensure you're running out of the correct directory and with the correct python environment.
-
-### Polling with celery
-
-Create a new celery task and schedule in your app (see the celery documentation for details). Your `tasks.py` should look something like this:
-
-```python
-from celery import shared_task
-from feeds.utils import update_feeds
-
-@shared_task
-def get_those_feeds():
-
-    # the number is the max number of feeds to poll in one go
-    update_feeds(30)
-```
-
-## Tracking read/unread state of feeds
-
-There are two ways to track the read/unread state of feeds depending on your needs.
-
-### Single User Installations
-
-If your usage is just for a single user, then there are helper methods on a Source
-to track your read state.
-
-All posts come in unread. You can get the current number of unread posts from
-`Source.unread_count`.
-
-To get a ResultSet of all the unread posts from a feed call `Source.get_unread_posts`
-
-To mark all posts on a feed as read call `Source.mark_read`
-
-To get all of the posts in a feed regardless of read status, a page at a time call
-`Source.get_paginated_posts` which returns a tuple of (Posts, Paginator)
-
-### Multi-User Installations
-
-To allow multiple users to follow the same feed with individual read/unread status,
-create a new `Subscription` for that Source and User.
-
-Subscription has the same helper methods for retrieving posts and marking read as
-Source.
-
-You can also arrange feeds into a folder-like hierarchy using Subscriptions.
-Every Subscription has an optional `parent`. Subscriptions with a `None` parent
-are considered at the root level. By convention, Subscriptions that are acting as parent
-folders should have a `None` `source`
-
-Subscriptions have a `name` field which by convention should be a display name if it is
-a folder or the name of the Source it is tracking. However this can be set to any
-value if you want to give a personally-meaningful name to a feed whose name is cryptic.
-
-There are two helper methods in the `utils` module to help manage subscriptions as folders.
-`get_subscription_list_for_user` will return all Subscriptions for a User where the
-parent is None. `get_unread_subscription_list_for_user` will do the same but only returns
-Subscriptions that are unread or that have unread children if they are a folder.
-
-## Cloudflare Busting
-
-django-feed-reader has Dripfeed support built in. If a feed becomes blocked by Cloudflare
-it can be polled via Dripfeed instead. This requires a [Dripfeed](https://dripfeed.app)
-account and API key.
-
-For more details see the [full documentation](https://django-feed-reader.readthedocs.io).
+Full documentation is available at [django-feed-reader.readthedocs.io](https://django-feed-reader.readthedocs.io).

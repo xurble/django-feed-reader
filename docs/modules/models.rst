@@ -1,6 +1,14 @@
 Models
 ======
 
+``django-feed-reader`` revolves around four main models:
+
+* ``Source``: one subscribed feed
+* ``Post``: one entry/item in a feed
+* ``Enclosure``: media attached to a post
+* ``Subscription``: a user's relationship to a source, including folder/group support
+
+The sections below are the API reference for each model.
 
 .. autoclass:: feeds.models.Source
    :members:
