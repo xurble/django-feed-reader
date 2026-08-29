@@ -249,6 +249,12 @@ Optional
 ``FEEDS_SAVE_JSON`` (default ``False``)
   Store raw parsed feed data in the ``json`` fields on ``Source`` and ``Post``. Useful if you need access to custom feed attributes, but it increases database usage.
 
+``FEEDS_MAX_PAGINATION_PAGES`` (default ``20``)
+  Maximum number of additional ``rel="next"`` pages fetched when backfilling a new XML/Atom source.
+
+``FEEDS_MAX_PAGINATION_ENTRIES`` (default ``2000``)
+  Maximum total entries imported during the initial XML/Atom history backfill. Both pagination limits must be positive integers; invalid values use their defaults.
+
 ``FEEDS_DRIPFEED_KEY`` (default unset)
   If present, Cloudflare-blocked feeds can be retried via `Dripfeed <https://dripfeed.app>`_.
 

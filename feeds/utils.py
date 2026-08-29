@@ -260,6 +260,9 @@ def _read_feed_process_success_body(
     ok = True
     changed = False
 
+    if hasattr(source_feed, "_pagination_result"):
+        del source_feed._pagination_result
+
     _read_feed_store_validator_headers(source_feed, ret, was302)
 
     output.write(
@@ -276,14 +279,15 @@ def _read_feed_process_success_body(
         content_type=content_type,
         output=output,
     )
+    pagination_result = getattr(source_feed, "_pagination_result", None)
 
     if ok and changed:
         source_feed.interval /= 2
-        source_feed.last_result = " OK (updated)"
+        source_feed.last_result = pagination_result or " OK (updated)"
         source_feed.last_change = timezone.now()
 
     elif ok:
-        source_feed.last_result = " OK"
+        source_feed.last_result = pagination_result or " OK"
         source_feed.interval += 20
     else:
         source_feed.interval += 120

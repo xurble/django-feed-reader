@@ -180,8 +180,10 @@ Evidence: `feeds/utils.py`; `feeds/url_safety.py`;
   `align`, `valign`, `hspace`, `width`, and `height` attributes shall additionally
   be removed from the sanitizer's acceptable attributes.
 - **PARSE-011** — On the first successful XML/Atom import, `rel="next"` links shall
-  be followed to backfill available history. The lack of termination safeguards is
-  recorded under assumption A-001 and gap GAP-001.
+  be followed to backfill available history, up to 20 additional pages and 2,000
+  total entries by default. Repeated or unsafe page URLs, failed responses, empty
+  responses, and invalid feeds shall stop the backfill while preserving imported
+  posts.
 - **PARSE-012** — When raw JSON storage is enabled, parsed source and entry data
   shall be stored in their JSON fields, excluding the duplicated entries/items list
   from the source payload.
@@ -270,6 +272,9 @@ Evidence: `feeds/utils.py`; `feeds/tests/test_http.py`;
   `FEEDS_KEEP_OLD_ENCLOSURES`, `FEEDS_SAVE_JSON`, `FEEDS_DRIPFEED_KEY`, and
   `FEEDS_CLOUDFLARE_WORKER`. Their relationship to unprefixed names in project
   guidance is subject to assumption A-005.
+- **CFG-007** — `FEEDS_MAX_PAGINATION_PAGES` and
+  `FEEDS_MAX_PAGINATION_ENTRIES` shall default to 20 and 2,000 respectively.
+  Invalid or non-positive values shall use those defaults.
 
 Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
 `feeds/utils_internal.py`; `feeds/management/commands/refreshfeeds.py`;
@@ -284,8 +289,8 @@ Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
   represented by package metadata; the current classifier list includes Django
   3.2, 4.2, 5.0, and 5.1.
 - **NFR-001** — Polling shall bound direct HTTP waits with a 20-second request
-  timeout. First-import pagination currently weakens this bound at the workflow
-  level as recorded in GAP-001.
+  timeout and first-import history backfill with configurable page and entry
+  limits.
 - **NFR-002** — Scheduled polling, subscription tree loading, post lookup, and
   enclosure synchronization shall use the existing indexes and batched operations
   intended to avoid per-row query growth in common workflows.
@@ -297,9 +302,6 @@ Evidence: `AGENTS.md`; `setup.py`; `feeds/models.py`;
 
 ## 10. Suspected defects, contradictions, and coverage gaps
 
-- **GAP-001 — Unbounded pagination:** first-import Atom pagination has no page cap,
-  repeated-URL detection, or entry cap. GitHub issue #43 reports an effectively
-  indefinite import producing thousands of posts.
 - **GAP-002 — `last_polled` persistence:** `read_feed` assigns `last_polled`, but the
   final partial save omits that field, so the assignment is not persisted by the
   observed path.
@@ -327,21 +329,6 @@ These entries describe evidence and are not target-state requirements.
 
 The specification was approved without resolving the following assumptions. They
 remain provisional and must not be treated as confirmed target-state decisions.
-
-### A-001 — Unbounded history backfill
-
-Provisional interpretation: exhaustive first-import pagination is intended, but
-the absence of termination safeguards is a defect.
-
-Evidence: recursive/iterative `rel="next"` handling in `parse_feed_xml`, pagination
-tests, and open GitHub issue #43.
-
-Confidence: high.
-
-Impact if wrong: pagination requirements, resource limits, imported history, and
-operator recovery behavior.
-
-Question: Should pagination be bounded and protected by repeated-URL detection?
 
 ### A-002 — Automatic source disabling
 
