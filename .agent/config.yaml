@@ -1,0 +1,14 @@
+version: 1
+project:
+  type: django
+  profile: rigorous
+commands:
+  check: .venv/bin/pytest --reuse-db
+github:
+  enabled: true
+  use_issues: true
+  merge_method: squash
+  squash_merge_commit_message: pr-title-description
+  delete_branch_on_merge: true
+git:
+  conventional_commits: true
