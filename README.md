@@ -261,6 +261,13 @@ If `FEEDS_SERVER` is not set, the library will derive a default from `ALLOWED_HO
   - Useful when you want access to custom or uncommon feed attributes.
   - Increases database usage.
 
+- `FEEDS_MAX_PAGINATION_PAGES` (default: `20`)
+  - Maximum number of additional `rel="next"` pages fetched when backfilling a new XML/Atom source.
+
+- `FEEDS_MAX_PAGINATION_ENTRIES` (default: `2000`)
+  - Maximum total entries imported during the initial XML/Atom history backfill.
+  - Both pagination limits must be positive integers; invalid values use their defaults.
+
 - `FEEDS_DRIPFEED_KEY` (default: unset)
   - If present, Cloudflare-blocked feeds can be retried via [Dripfeed](https://dripfeed.app).
 

@@ -12,6 +12,13 @@ from django.conf import settings
 from django.utils import timezone
 
 from feeds.models import Enclosure, Post, Source
+from feeds.url_safety import (
+    is_safe_http_redirect_target,
+    resolve_feed_redirect_location,
+)
+
+DEFAULT_MAX_PAGINATION_PAGES = 20
+DEFAULT_MAX_PAGINATION_ENTRIES = 2000
 
 VERIFY_HTTPS = True
 if hasattr(settings, "FEEDS_VERIFY_HTTPS"):
@@ -31,6 +38,31 @@ if hasattr(settings, "FEEDS_USER_AGENT"):
 
 
 logger = logging.getLogger(__file__)
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    """Return a positive integer setting, falling back for invalid values."""
+    try:
+        value = int(getattr(settings, name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _pagination_limit(name: str, value: int) -> str:
+    unit = name[:-1] if value == 1 else name
+    return f"Pagination stopped at {value} {unit}"
+
+
+def _next_feed_page(feed, current_url: str):
+    """Return the resolved first rel=next URL, or None when pagination is complete."""
+    for link in getattr(feed.feed, "links", []):
+        if link.get("rel") == "next":
+            href = link.get("href", "")
+            if not isinstance(href, str):
+                return ""
+            return resolve_feed_redirect_location(href, current_url)
+    return None
 
 
 def _posts_by_guid_lookup(source_feed: Source) -> dict:
@@ -320,18 +352,25 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
     return (ok, changed)
 
 
-def parse_feed_xml(source_feed, feed_content, output: TextIO):
+def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
 
     ok = True
     changed = False
 
     is_first = not source_feed.posts.exists()
+    if is_first and max_entries is None:
+        max_entries = _positive_int_setting(
+            "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
+        )
 
     # output.write(ret.content)
     try:
         _customize_sanitizer(parser)
         f = parser.parse(feed_content)  # need to start checking feed parser errors here
         entries = f["entries"]
+        entries_available = len(entries)
+        if max_entries is not None:
+            entries = entries[:max_entries]
         if len(entries):
             source_feed.last_success = (
                 timezone.now()
@@ -492,28 +531,89 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO):
         # then see if it's paginated and go back through its history
         agent = get_agent(source_feed)
         headers = {"User-Agent": agent}  # identify ourselves
-        keep_going = True
-        while keep_going:
-            keep_going = False  # assume were stopping unless we find a next link
-            if hasattr(f.feed, "links"):
-                for link in f.feed.links:
-                    if "rel" in link and link["rel"] == "next":
-                        ret = requests.get(
-                            link["href"],
-                            headers=headers,
-                            verify=VERIFY_HTTPS,
-                            allow_redirects=True,
-                            timeout=20,
-                        )
-                        (pok, pchanged) = parse_feed_xml(
-                            source_feed, ret.content, output
-                        )
-                        # print(link['href'])
-                        # print((pok, pchanged))
-                        f = parser.parse(
-                            ret.content
-                        )  # rebase the loop on this feed version
-                        keep_going = True
+        max_pages = _positive_int_setting(
+            "FEEDS_MAX_PAGINATION_PAGES", DEFAULT_MAX_PAGINATION_PAGES
+        )
+        max_total_entries = _positive_int_setting(
+            "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
+        )
+        entries_processed = min(entries_available, max_total_entries)
+        pages_fetched = 0
+        current_url = source_feed.feed_url
+        visited_urls = {current_url}
+
+        if entries_available > max_total_entries:
+            source_feed._pagination_result = _pagination_limit(
+                "entries", max_total_entries
+            )
+
+        while not hasattr(source_feed, "_pagination_result"):
+            next_url = _next_feed_page(f, current_url)
+            if next_url is None:
+                break
+            if not is_safe_http_redirect_target(next_url):
+                source_feed._pagination_result = "Pagination stopped at unsafe URL"
+                break
+            if next_url in visited_urls:
+                source_feed._pagination_result = "Pagination stopped at repeated URL"
+                break
+            if pages_fetched >= max_pages:
+                source_feed._pagination_result = _pagination_limit("pages", max_pages)
+                break
+            if entries_processed >= max_total_entries:
+                source_feed._pagination_result = _pagination_limit(
+                    "entries", max_total_entries
+                )
+                break
+
+            try:
+                ret = requests.get(
+                    next_url,
+                    headers=headers,
+                    verify=VERIFY_HTTPS,
+                    allow_redirects=False,
+                    timeout=20,
+                )
+            except (requests.RequestException, OSError) as ex:
+                source_feed._pagination_result = (
+                    "Pagination request failed: " + str(ex)
+                )[:255]
+                break
+
+            if ret.status_code < 200 or ret.status_code >= 300:
+                source_feed._pagination_result = (
+                    f"Pagination request failed: HTTP {ret.status_code}"
+                )
+                break
+
+            if not ret.content:
+                source_feed._pagination_result = "Pagination stopped at empty response"
+                break
+
+            remaining_entries = max_total_entries - entries_processed
+            page_feed = parser.parse(ret.content)
+            page_entries = page_feed.get("entries", [])
+            (page_ok, _page_changed) = parse_feed_xml(
+                source_feed,
+                ret.content,
+                output,
+                max_entries=remaining_entries,
+            )
+            if not page_ok:
+                source_feed._pagination_result = "Pagination stopped at invalid feed"
+                break
+
+            pages_fetched += 1
+            entries_processed += min(len(page_entries), remaining_entries)
+            visited_urls.add(next_url)
+            current_url = ret.url or next_url
+            visited_urls.add(current_url)
+            f = page_feed
+
+            if len(page_entries) > remaining_entries:
+                source_feed._pagination_result = _pagination_limit(
+                    "entries", max_total_entries
+                )
 
     return (ok, changed)
 

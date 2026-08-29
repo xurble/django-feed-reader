@@ -1,5 +1,6 @@
 
 ### 2.0.1
+- Fix: Bound first-import XML/Atom pagination, detect repeated page URLs, and stop cleanly on failed pagination responses
 - Fix: `get_unread_subscription_list_for_user` no longer returns read-only folder subscriptions as unread
 - Fix: Paginated feed import (`rel="next"`) when backfilling history for a new source
 - Fix: Numerous polling and parsing bugs (HTTP errors and timeouts, 304 handling and stale etag clearing, relative redirects, JSON feed expiry, empty or invalid bodies, entries without `enclosures`, incorrect `update_fields`, `Source.get_unread_posts`, `Post.title_url_encoded`, timezone-aware `due_poll`, and related issues)

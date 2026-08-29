@@ -3,6 +3,7 @@ from importlib import reload
 
 import requests_mock
 from django.conf import settings
+from django.test import override_settings
 from django.utils import timezone
 
 from feeds import utils, utils_internal
@@ -11,6 +12,32 @@ from feeds.utils import read_feed
 from feeds.utils_internal import hash_body
 
 from .base import BASE_URL, TEST_FILES_FOLDER, BaseTest, NullOutput
+
+
+def _atom_feed(entry_ids, next_url=None):
+    next_link = ""
+    if next_url is not None:
+        next_link = f'<link href="{next_url}" rel="next"/>'
+    entries = "".join(
+        f"""
+        <entry>
+          <title>Item {entry_id}</title>
+          <id>tag:example.org,2024:{entry_id}</id>
+          <updated>2024-01-01T12:00:00Z</updated>
+          <content type="html">Item {entry_id}</content>
+        </entry>
+        """
+        for entry_id in entry_ids
+    )
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <title>Paged feed</title>
+      <link href="{BASE_URL}" rel="self"/>
+      {next_link}
+      <updated>2024-01-01T12:00:00Z</updated>
+      {entries}
+    </feed>
+    """.encode("utf-8")
 
 
 @requests_mock.Mocker()
@@ -45,6 +72,141 @@ class XMLFeedsTest(BaseTest):
         titles = {p.title for p in src.posts.all()}
         self.assertIn("First page item", titles)
         self.assertIn("Second page item", titles)
+
+    def test_atom_stops_at_repeated_pagination_url(self, mock):
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url=BASE_URL),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 1)
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.last_result, "Pagination stopped at repeated URL")
+
+    def test_atom_stops_at_two_url_pagination_cycle(self, mock):
+        second_url = BASE_URL + "page-2.xml"
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url=second_url),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        mock.register_uri(
+            "GET",
+            second_url,
+            status_code=200,
+            content=_atom_feed(["second"], next_url=BASE_URL),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 2)
+        self.assertEqual(len(mock.request_history), 2)
+        self.assertEqual(src.last_result, "Pagination stopped at repeated URL")
+
+    @override_settings(FEEDS_MAX_PAGINATION_PAGES=1)
+    def test_atom_stops_at_pagination_page_limit(self, mock):
+        second_url = BASE_URL + "page-2.xml"
+        third_url = BASE_URL + "page-3.xml"
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url=second_url),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        mock.register_uri(
+            "GET",
+            second_url,
+            status_code=200,
+            content=_atom_feed(["second"], next_url=third_url),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 2)
+        self.assertEqual(len(mock.request_history), 2)
+        self.assertEqual(src.last_result, "Pagination stopped at 1 page")
+
+    @override_settings(FEEDS_MAX_PAGINATION_ENTRIES=2)
+    def test_atom_stops_at_total_entry_limit(self, mock):
+        second_url = BASE_URL + "page-2.xml"
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url=second_url),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        mock.register_uri(
+            "GET",
+            second_url,
+            status_code=200,
+            content=_atom_feed(["second", "third"]),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 2)
+        self.assertEqual(src.last_result, "Pagination stopped at 2 entries")
+
+    def test_atom_stops_when_pagination_request_fails(self, mock):
+        second_url = BASE_URL + "page-2.xml"
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url=second_url),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        mock.register_uri("GET", second_url, status_code=503)
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 1)
+        self.assertTrue(src.last_result.startswith("Pagination request failed:"))
+
+    def test_atom_does_not_request_unsafe_pagination_url(self, mock):
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url="http://127.0.0.1/private"),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 1)
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.last_result, "Pagination stopped at unsafe URL")
 
     def test_item_without_enclosures_list(self, mock):
         """Entries without an enclosures key must not raise KeyError."""
