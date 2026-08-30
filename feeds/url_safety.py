@@ -61,6 +61,11 @@ def validate_http_redirect_target(
     invalid_result = (False, "Unsafe or invalid redirect URL")
     if not url or not isinstance(url, str):
         return invalid_result
+    # Requests and urllib.parse disagree about backslashes in URL authorities.
+    # Reject them before parsing so validation and connection cannot target
+    # different hosts (for example, ``127.0.0.1\\@example.com``).
+    if "\\" in url:
+        return invalid_result
     try:
         parsed = urlparse(url)
     except (TypeError, ValueError):

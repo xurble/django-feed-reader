@@ -65,6 +65,13 @@ class IsSafeHttpRedirectTargetTests(SimpleTestCase):
     def test_rejects_empty(self):
         self.assertFalse(is_safe_http_redirect_target(""))
 
+    def test_rejects_backslash_authority_ambiguity(self):
+        self.assertFalse(
+            is_safe_http_redirect_target(
+                "http://127.0.0.1\\@example.com/", resolve_hostname=True
+            )
+        )
+
     @patch("feeds.url_safety.socket.getaddrinfo")
     def test_dns_validation_allows_public_addresses(self, mock_getaddrinfo):
         mock_getaddrinfo.return_value = [

@@ -401,6 +401,24 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
         self.assertEqual(src.posts.count(), 0)
 
+    def test_temp_redirect_rejects_backslash_authority_ambiguity(self, mock):
+        ambiguous_url = "http://127.0.0.1\\@example.com/"
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": ambiguous_url},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+
     def test_temp_redirect_rejects_hostname_resolving_private(self, mock):
         safe_looking_url = "http://internal.example/feed"
         self.mock_getaddrinfo.return_value = [
