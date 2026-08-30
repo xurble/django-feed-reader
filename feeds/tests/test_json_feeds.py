@@ -128,6 +128,54 @@ class JSONFeedTest(BaseTest):
 
         self.assertEqual(post.enclosures.count(), 1)
 
+    def test_keep_old_attachment_reactivates_returning_url(self, mock):
+
+        settings.FEEDS_KEEP_OLD_ENCLOSURES = True
+
+        # to pick up the settings change
+        reload(utils)
+        reload(utils_internal)
+
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="json_attachment_a.json",
+            content_type="application/json",
+        )
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="json_attachment_b.json",
+            content_type="application/json",
+        )
+
+        read_feed(src, output=NullOutput())
+
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="json_attachment_a.json",
+            content_type="application/json",
+        )
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        post = src.posts.get()
+        self.assertEqual(post.enclosures.count(), 2)
+        self.assertEqual(post.current_enclosures.count(), 1)
+        self.assertEqual(post.old_enclosures.count(), 1)
+        self.assertEqual(
+            post.current_enclosures.get().href,
+            "https://example.org/attachment-a.mp3",
+        )
+
     def test_expired_json_feed(self, mock):
         """parse_feed_json must return a 2-tuple for expired feeds."""
 
