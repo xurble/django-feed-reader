@@ -1,5 +1,7 @@
+import socket
 from datetime import timedelta
 from importlib import reload
+from unittest.mock import patch
 
 import requests
 import requests_mock
@@ -15,6 +17,15 @@ from .base import BASE_URL, BaseTest, NullOutput
 
 @requests_mock.Mocker()
 class HTTPStuffTest(BaseTest):
+    def setUp(self):
+        super().setUp()
+        dns_patcher = patch("feeds.url_safety.socket.getaddrinfo")
+        self.mock_getaddrinfo = dns_patcher.start()
+        self.addCleanup(dns_patcher.stop)
+        self.mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))
+        ]
+
     def test_etags(self, mock):
 
         self._populate_mock(
@@ -362,6 +373,74 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.posts.count(), 0)
         self.assertEqual(src.feed_url, BASE_URL)
 
+    def test_temp_redirect_rejects_unsafe_later_hop(self, mock):
+        safe_url = "http://safe.example/feed"
+        unsafe_url = "http://127.0.0.1/internal"
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": safe_url},
+        )
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": unsafe_url},
+            url=safe_url,
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 2)
+        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.posts.count(), 0)
+
+    def test_temp_redirect_rejects_hostname_resolving_private(self, mock):
+        safe_looking_url = "http://internal.example/feed"
+        self.mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 80))
+        ]
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": safe_looking_url},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.last_result, "Unsafe redirect address")
+
+    def test_temp_redirect_dns_failure_stops_before_request(self, mock):
+        safe_looking_url = "http://missing.example/feed"
+        self.mock_getaddrinfo.side_effect = socket.gaierror
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": safe_looking_url},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.last_result, "Redirect hostname resolution failed")
+
     def test_perm_redirect_rejects_unsafe_location(self, mock):
 
         unsafe = "http://127.0.0.1/internal"
@@ -380,6 +459,27 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.feed_url, BASE_URL)
+
+    def test_perm_redirect_rejects_hostname_resolving_private(self, mock):
+        safe_looking_url = "http://internal.example/feed"
+        self.mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.2", 80))
+        ]
+        self._populate_mock(
+            mock,
+            status=301,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": safe_looking_url},
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.last_result, "Unsafe redirect address")
         self.assertEqual(src.feed_url, BASE_URL)
 
     def test_empty_response_body(self, mock):
@@ -441,6 +541,94 @@ class HTTPStuffTest(BaseTest):
 
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.posts.count(), 1)
+
+    def test_temp_redirect_safe_multi_hop_relative_location(self, mock):
+        first_url = "http://safe.example/first.xml"
+        final_url = "http://safe.example/final.xml"
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": first_url},
+        )
+        self._populate_mock(
+            mock,
+            status=307,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": "/final.xml"},
+            url=first_url,
+        )
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/xml+rss",
+            url=final_url,
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 3)
+        self.assertEqual(src.status_code, 200)
+        self.assertEqual(src.posts.count(), 1)
+
+    def test_temp_redirect_loop_stops_before_repeated_request(self, mock):
+        first_url = "http://safe.example/first.xml"
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": first_url},
+        )
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": BASE_URL},
+            url=first_url,
+        )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 2)
+        self.assertEqual(src.last_result, "Redirect loop detected")
+
+    def test_temp_redirect_hop_limit(self, mock):
+        first_url = BASE_URL + "redirect/1"
+        self._populate_mock(
+            mock,
+            status=302,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Location": first_url},
+        )
+        for hop in range(1, 11):
+            self._populate_mock(
+                mock,
+                status=302,
+                test_file="empty_file.txt",
+                content_type="text/plain",
+                headers={"Location": BASE_URL + f"redirect/{hop + 1}"},
+                url=BASE_URL + f"redirect/{hop}",
+            )
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 11)
+        self.assertEqual(src.last_result, "Redirect hop limit exceeded")
 
     def test_temp_redirect(self, mock):
 
