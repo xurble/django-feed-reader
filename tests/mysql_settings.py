@@ -1,5 +1,6 @@
 import os
 
+from . import settings as base_settings
 from .settings import *
 
 DATABASES = {
@@ -11,5 +12,6 @@ DATABASES = {
         "HOST": os.environ.get("MYSQL_HOST", "127.0.0.1"),
         "PORT": os.environ.get("MYSQL_PORT", "3306"),
         "OPTIONS": {"charset": "utf8mb4"},
-    }
+    },
+    "other": base_settings.DATABASES["other"],
 }

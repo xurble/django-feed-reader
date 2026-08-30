@@ -1,9 +1,9 @@
 from django.db.models import Count
 
 
-def _duplicate_groups(model, group_fields, **filters):
+def _duplicate_groups(model, group_fields, database_alias, **filters):
     """Return a bounded set of duplicate groups and their row IDs."""
-    rows = model.objects.filter(**filters)
+    rows = model.objects.using(database_alias).filter(**filters)
     groups = (
         rows.values(*group_fields)
         .annotate(duplicate_count=Count("pk"))
@@ -27,13 +27,14 @@ def _format_examples(examples, id_label):
 
 def preflight_legacy_duplicates(apps, schema_editor):
     """Stop before adding constraints when legacy-valid duplicates exist."""
+    database_alias = schema_editor.connection.alias
     Source = apps.get_model("feeds", "Source")
     Post = apps.get_model("feeds", "Post")
     Subscription = apps.get_model("feeds", "Subscription")
 
     problems = []
 
-    group_count, examples = _duplicate_groups(Source, ("feed_url",))
+    group_count, examples = _duplicate_groups(Source, ("feed_url",), database_alias)
     if group_count:
         problems.append(
             "Duplicate Source.feed_url values "
@@ -48,6 +49,7 @@ def preflight_legacy_duplicates(apps, schema_editor):
     group_count, examples = _duplicate_groups(
         Post,
         ("source_id", "guid"),
+        database_alias,
         guid__isnull=False,
     )
     if group_count:
@@ -63,6 +65,7 @@ def preflight_legacy_duplicates(apps, schema_editor):
     group_count, examples = _duplicate_groups(
         Subscription,
         ("user_id", "source_id"),
+        database_alias,
         source_id__isnull=False,
     )
     if group_count:

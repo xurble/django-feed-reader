@@ -2,7 +2,7 @@ import hashlib
 from unittest import skipUnless
 
 from django.conf import settings
-from django.db import connection, models
+from django.db import connection, connections, models
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.test import TransactionTestCase
@@ -173,6 +173,93 @@ class LegacyDuplicatePreflightMigrationTests(TransactionTestCase):
             hashlib.sha256(b"unique-guid").hexdigest(),
         )
 
+    def test_0017_retry_accepts_existing_source_constraint(self):
+        Source = self.legacy_apps.get_model("feeds", "Source")
+        Source.objects.create(name="unique", feed_url="https://example.com/feed")
+        source_constraint = models.UniqueConstraint(
+            fields=("feed_url",),
+            name="feeds_source_unique_feed_url",
+        )
+        with connection.schema_editor() as schema_editor:
+            schema_editor.add_constraint(Source, source_constraint)
+
+        MigrationExecutor(connection).migrate([self.migrate_to])
+
+        self.assertTrue(
+            MigrationRecorder(connection)
+            .migration_qs.filter(app="feeds", name=self.migrate_to[1])
+            .exists()
+        )
+        self.assertIn("feeds_source_unique_feed_url", self._constraints("feeds_source"))
+
+
+class NonDefaultDatabaseMigrationTests(TransactionTestCase):
+    databases = {"default", "other"}
+    database_alias = "other"
+    migrate_from = ("feeds", "0016_source_due_poll_timezone_aware_default")
+    migrate_to = ("feeds", "0017_add_integrity_constraints")
+    migrate_latest = ("feeds", "0019_performance_indexes")
+
+    def setUp(self):
+        super().setUp()
+        self.database = connections[self.database_alias]
+        executor = MigrationExecutor(self.database)
+        executor.migrate([self.migrate_from])
+        self.legacy_apps = executor.loader.project_state([self.migrate_from]).apps
+        self.addCleanup(self._restore_latest_schema)
+
+    def _restore_latest_schema(self):
+        self.legacy_apps.get_model("feeds", "Source").objects.using(
+            self.database_alias
+        ).all().delete()
+        MigrationExecutor(self.database).migrate([self.migrate_latest])
+
+    def test_preflight_inspects_the_selected_database(self):
+        Source = self.legacy_apps.get_model("feeds", "Source")
+        duplicate_url = "https://example.com/duplicate"
+        Source.objects.using(self.database_alias).create(
+            name="one", feed_url=duplicate_url
+        )
+        Source.objects.using(self.database_alias).create(
+            name="two", feed_url=duplicate_url
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            MigrationExecutor(self.database).migrate([self.migrate_to])
+
+        self.assertIn("Duplicate Source.feed_url values", str(raised.exception))
+        self.assertFalse(
+            MigrationRecorder(self.database)
+            .migration_qs.filter(app="feeds", name=self.migrate_to[1])
+            .exists()
+        )
+
+    def test_guid_digest_backfill_uses_the_selected_database(self):
+        Source = self.legacy_apps.get_model("feeds", "Source")
+        Post = self.legacy_apps.get_model("feeds", "Post")
+        source = Source.objects.using(self.database_alias).create(
+            name="unique", feed_url="https://example.com/unique"
+        )
+        post = Post.objects.using(self.database_alias).create(
+            source=source,
+            title="Unique post",
+            body="body",
+            created=timezone.now(),
+            guid="other-database-guid",
+            index=1,
+        )
+
+        executor = MigrationExecutor(self.database)
+        executor.migrate([self.migrate_latest])
+        LatestPost = executor.loader.project_state(
+            [self.migrate_latest]
+        ).apps.get_model("feeds", "Post")
+
+        self.assertEqual(
+            LatestPost.objects.using(self.database_alias).get(pk=post.pk).guid_digest,
+            hashlib.sha256(b"other-database-guid").hexdigest(),
+        )
+
 
 @skipUnless(connection.vendor == "mysql", "MySQL-specific migration recovery")
 class MySQLPublishedMigrationRecoveryTests(TransactionTestCase):
@@ -202,6 +289,12 @@ class MySQLPublishedMigrationRecoveryTests(TransactionTestCase):
         return {column.name for column in columns}
 
     def _mark_published_0017_applied(self):
+        self._add_source_constraint()
+        MigrationRecorder(connection).record_applied(
+            "feeds", "0017_add_integrity_constraints"
+        )
+
+    def _add_source_constraint(self):
         Source = self.legacy_apps.get_model("feeds", "Source")
         source_constraint = models.UniqueConstraint(
             fields=("feed_url",),
@@ -209,9 +302,6 @@ class MySQLPublishedMigrationRecoveryTests(TransactionTestCase):
         )
         with connection.schema_editor() as schema_editor:
             schema_editor.add_constraint(Source, source_constraint)
-        MigrationRecorder(connection).record_applied(
-            "feeds", "0017_add_integrity_constraints"
-        )
 
     def _create_source_and_user(self):
         Source = self.legacy_apps.get_model("feeds", "Source")
@@ -254,6 +344,21 @@ class MySQLPublishedMigrationRecoveryTests(TransactionTestCase):
         )
         self.assertEqual(Post.objects.count(), 2)
         self.assertEqual(Subscription.objects.count(), 2)
+
+    def test_0017_retry_accepts_source_constraint_without_migration_record(self):
+        self._create_source_and_user()
+        self._add_source_constraint()
+
+        MigrationExecutor(connection).migrate(
+            [("feeds", "0017_add_integrity_constraints")]
+        )
+
+        self.assertTrue(
+            MigrationRecorder(connection)
+            .migration_qs.filter(app="feeds", name="0017_add_integrity_constraints")
+            .exists()
+        )
+        self.assertIn("feeds_source_unique_feed_url", self._constraints("feeds_source"))
 
     def test_0018_retry_accepts_partially_applied_mysql_schema(self):
         Post = self.legacy_apps.get_model("feeds", "Post")

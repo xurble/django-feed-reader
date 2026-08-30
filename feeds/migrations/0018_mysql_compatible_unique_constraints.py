@@ -5,55 +5,8 @@ import hashlib
 
 from django.db import migrations, models
 
+from ._idempotent_operations import AddConstraintIfMissing, AddFieldIfMissing
 from ._legacy_duplicate_preflight import preflight_legacy_duplicates
-
-
-def _column_exists(schema_editor, table_name, column_name):
-    with schema_editor.connection.cursor() as cursor:
-        columns = schema_editor.connection.introspection.get_table_description(
-            cursor, table_name
-        )
-    return any(column.name == column_name for column in columns)
-
-
-def _constraint_exists(schema_editor, table_name, constraint_name):
-    with schema_editor.connection.cursor() as cursor:
-        constraints = schema_editor.connection.introspection.get_constraints(
-            cursor, table_name
-        )
-    return constraint_name in constraints
-
-
-class AddFieldIfMissing(migrations.AddField):
-    """Make retrying a partially applied non-transactional migration safe."""
-
-    def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        model = to_state.apps.get_model(app_label, self.model_name)
-        if not _column_exists(schema_editor, model._meta.db_table, self.name):
-            super().database_forwards(app_label, schema_editor, from_state, to_state)
-
-    def database_backwards(self, app_label, schema_editor, from_state, to_state):
-        model = from_state.apps.get_model(app_label, self.model_name)
-        if _column_exists(schema_editor, model._meta.db_table, self.name):
-            super().database_backwards(app_label, schema_editor, from_state, to_state)
-
-
-class AddConstraintIfMissing(migrations.AddConstraint):
-    """Skip a constraint already created by an interrupted MySQL migration."""
-
-    def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        model = to_state.apps.get_model(app_label, self.model_name)
-        if not _constraint_exists(
-            schema_editor, model._meta.db_table, self.constraint.name
-        ):
-            super().database_forwards(app_label, schema_editor, from_state, to_state)
-
-    def database_backwards(self, app_label, schema_editor, from_state, to_state):
-        model = from_state.apps.get_model(app_label, self.model_name)
-        if _constraint_exists(
-            schema_editor, model._meta.db_table, self.constraint.name
-        ):
-            super().database_backwards(app_label, schema_editor, from_state, to_state)
 
 
 def _digest(guid: str) -> str:
@@ -61,16 +14,19 @@ def _digest(guid: str) -> str:
 
 
 def forwards_fill_guid_digest(apps, schema_editor):
+    database_alias = schema_editor.connection.alias
     Post = apps.get_model("feeds", "Post")
-    for pk, guid in Post.objects.values_list("id", "guid").iterator(chunk_size=500):
+    posts = Post.objects.using(database_alias)
+    for pk, guid in posts.values_list("id", "guid").iterator(chunk_size=500):
         if guid is None:
             continue
-        Post.objects.filter(pk=pk).update(guid_digest=_digest(guid))
+        posts.filter(pk=pk).update(guid_digest=_digest(guid))
 
 
 def backwards_clear_guid_digest(apps, schema_editor):
+    database_alias = schema_editor.connection.alias
     Post = apps.get_model("feeds", "Post")
-    Post.objects.update(guid_digest=None)
+    Post.objects.using(database_alias).update(guid_digest=None)
 
 
 class Migration(migrations.Migration):
