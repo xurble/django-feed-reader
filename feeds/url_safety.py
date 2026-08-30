@@ -1,11 +1,14 @@
 """Validate HTTP(S) redirect targets to reduce SSRF risk when following Location headers."""
 
 import ipaddress
+import socket
+from typing import Tuple
 from urllib.parse import urljoin, urlparse
 
 __all__ = [
     "resolve_feed_redirect_location",
     "is_safe_http_redirect_target",
+    "validate_http_redirect_target",
     "derive_default_feeds_server",
 ]
 
@@ -43,47 +46,75 @@ def resolve_feed_redirect_location(location: str, feed_url: str) -> str:
     return urljoin(base, loc)
 
 
-def is_safe_http_redirect_target(url: str) -> bool:
-    """
-    Return True if url is an absolute http(s) URL with a host that is not obviously
-    private, loopback, link-local, or cloud metadata. Hostnames are not DNS-resolved.
-    """
-    if not url or not isinstance(url, str):
+def _is_safe_ip_address(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
         return False
+    return ip.is_global
+
+
+def validate_http_redirect_target(
+    url: str, resolve_hostname: bool = False
+) -> Tuple[bool, str]:
+    """Validate a redirect URL and optionally all addresses returned by DNS."""
+    invalid_result = (False, "Unsafe or invalid redirect URL")
+    if not url or not isinstance(url, str):
+        return invalid_result
+    # Requests and urllib.parse disagree about backslashes in URL authorities.
+    # Reject them before parsing so validation and connection cannot target
+    # different hosts (for example, ``127.0.0.1\\@example.com``).
+    if "\\" in url:
+        return invalid_result
     try:
         parsed = urlparse(url)
     except (TypeError, ValueError):
-        return False
+        return invalid_result
     scheme = (parsed.scheme or "").lower()
     if scheme not in ("http", "https"):
-        return False
+        return invalid_result
     host = parsed.hostname
     if not host:
-        return False
+        return invalid_result
     host_lower = host.lower().rstrip(".")
     if host_lower in _BLOCKED_HOSTNAMES:
-        return False
+        return invalid_result
     if host_lower.endswith(".local") or host_lower.endswith(".localhost"):
-        return False
-
-    # Strip IPv6 brackets for ipaddress
-    host_for_ip = host_lower
-    if host_for_ip.startswith("[") and host_for_ip.endswith("]"):
-        host_for_ip = host_for_ip[1:-1]
+        return invalid_result
 
     try:
-        ip = ipaddress.ip_address(host_for_ip)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-        ):
-            return False
-        if ip == ipaddress.ip_address("169.254.169.254"):
-            return False
+        ipaddress.ip_address(host_lower)
     except ValueError:
-        pass
+        if not resolve_hostname:
+            return (True, "")
+    else:
+        return (True, "") if _is_safe_ip_address(host_lower) else invalid_result
 
-    return True
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+        addresses = socket.getaddrinfo(
+            host_lower,
+            port,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+        )
+    except (OSError, ValueError):
+        return (False, "Redirect hostname resolution failed")
+
+    if not addresses:
+        return (False, "Redirect hostname resolution failed")
+    for address_info in addresses:
+        try:
+            address = address_info[4][0]
+        except (IndexError, TypeError):
+            return (False, "Redirect hostname resolution failed")
+        if not _is_safe_ip_address(address):
+            return (False, "Unsafe redirect address")
+
+    return (True, "")
+
+
+def is_safe_http_redirect_target(url: str, resolve_hostname: bool = False) -> bool:
+    """Return whether a redirect target passes URL and optional DNS checks."""
+    safe, _reason = validate_http_redirect_target(url, resolve_hostname)
+    return safe

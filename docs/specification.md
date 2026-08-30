@@ -106,8 +106,9 @@ Evidence: model fields, constraints, save behavior, and signals in
 
 - **HTTP-001** — Feed requests shall use a user agent containing the configured
   user-agent label, server identity, updater role, and source subscriber count.
-- **HTTP-002** — Direct feed requests shall use a 20-second timeout, configurable
-  TLS verification, and disabled automatic redirects for the first request.
+- **HTTP-002** — Feed requests shall use a 20-second timeout, configurable TLS
+  verification, and disabled automatic redirects. Redirects shall be followed
+  explicitly as described below.
 - **HTTP-003** — Stored ETag and Last-Modified values shall be sent as conditional
   request headers. Validator values from successful non-temporary responses shall
   replace the stored values.
@@ -132,17 +133,21 @@ Evidence: model fields, constraints, save behavior, and signals in
 - **REDIR-001** — A 301 or 308 response with a valid safe Location shall replace
   the stored feed URL. Its body shall not be fetched until a later poll.
 - **REDIR-002** — A 302, 303, or 307 response with a valid safe Location shall be
-  followed for the current poll. If the same temporary target persists for more
-  than 60 days, it shall replace the stored feed URL.
+  followed manually for the current poll, including subsequent 301, 302, 303, 307,
+  and 308 responses, up to 10 hops. Repeated targets shall terminate the chain. If
+  the same initial temporary target persists for more than 60 days, it shall
+  replace the stored feed URL.
 - **REDIR-003** — Relative Location values shall be resolved against the current
-  feed URL.
+  response URL.
 - **SEC-001** — Redirect targets shall be absolute HTTP(S) URLs with a host. Literal
   private, loopback, link-local, reserved, multicast, and metadata IP addresses,
   plus `localhost`, `.localhost`, `.local`, and the configured metadata hostname,
-  shall be rejected.
-- **SEC-002** — Redirect validation does not DNS-resolve hostnames and does not
-  validate initial source URLs or pagination links. This observed boundary is
-  subject to assumption A-004.
+  shall be rejected. Hostnames shall resolve successfully, and every returned
+  address shall be globally routable before a redirect request is made.
+- **SEC-002** — Initial source URLs and pagination links are not DNS-resolved before
+  requests. Redirect DNS validation is a pre-request check and does not pin the
+  connection address, so DNS rebinding remains outside the observed protection.
+  This boundary is subject to assumption A-004.
 
 Evidence: `feeds/utils.py`; `feeds/url_safety.py`;
 `feeds/tests/test_http.py`; `feeds/tests/test_url_safety.py`.
@@ -309,9 +314,9 @@ Evidence: `AGENTS.md`; `setup.py`; `feeds/models.py`;
   cycles are not rejected by model validation or database constraints.
 - **GAP-004 — Ignored pagination direction:**
   `Subscription.get_paginated_posts(oldest_first=...)` always orders newest first.
-- **GAP-005 — Partial SSRF boundary:** redirect targets are checked syntactically
-  and for literal unsafe IPs, but initial URLs and paginated links are unchecked and
-  hostnames are not DNS-resolved before requests.
+- **GAP-005 — Partial SSRF boundary:** redirect targets and their DNS results are
+  checked before each hop, but initial URLs and paginated links are not DNS-resolved
+  and redirect connections are not pinned against DNS rebinding.
 - **GAP-006 — Expired JSON polling:** an expired JSON Feed sets a three-day interval
   internally, but normal finalization clamps it to one day and leaves the source
   live.
@@ -365,7 +370,7 @@ Provisional interpretation: comprehensive SSRF protection is desirable for every
 URL fetched by the library, not only explicit redirects.
 
 Evidence: redirect hardening and tests; direct source and paginated requests bypass
-the validator; hostname validation does not resolve DNS.
+DNS validation, and redirect connections are not address-pinned.
 
 Confidence: medium.
 

@@ -11,8 +11,8 @@ from dripfeed import DripFeed, DripFeedException
 
 from feeds.models import Source, Subscription
 from feeds.url_safety import (
-    is_safe_http_redirect_target,
     resolve_feed_redirect_location,
+    validate_http_redirect_target,
 )
 from feeds.utils_internal import (
     VERIFY_HTTPS,
@@ -29,6 +29,9 @@ if hasattr(settings, "FEEDS_CLOUDFLARE_WORKER"):
     CLOUDFLARE_WORKER = settings.FEEDS_CLOUDFLARE_WORKER
 
 logger = logging.getLogger(__file__)
+
+REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+MAX_REDIRECT_HOPS = 10
 
 
 def update_feeds(max_feeds: int = 3, output: TextIO = stdout):
@@ -92,8 +95,11 @@ def _read_feed_apply_permanent_redirect(
         return
     raw_location = ret.headers["Location"]
     resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
-    if not resolved or not is_safe_http_redirect_target(resolved):
-        source_feed.last_result = "Unsafe or invalid redirect URL"
+    safe, failure_reason = validate_http_redirect_target(
+        resolved, resolve_hostname=True
+    )
+    if not safe:
+        source_feed.last_result = failure_reason
         return
     source_feed.feed_url = resolved
     source_feed.last_result = "Moved"
@@ -107,22 +113,45 @@ def _read_feed_follow_temporary_redirect(
     headers: dict,
 ) -> requests.Response:
     new_url = ""
+    current_url = ret.url or source_feed.feed_url
+    visited_urls = {current_url}
+    redirect_hops = 0
     try:
-        raw_location = ret.headers["Location"]
-        resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
-        if not resolved or not is_safe_http_redirect_target(resolved):
-            source_feed.last_result = "Unsafe or invalid redirect URL"
-            source_feed.interval += 60
-            return ret
-        new_url = resolved
-        ret = requests.get(
-            new_url,
-            headers=headers,
-            allow_redirects=True,
-            timeout=20,
-            verify=VERIFY_HTTPS,
-        )
-        source_feed.status_code = ret.status_code
+        while ret.status_code in REDIRECT_STATUS_CODES:
+            if redirect_hops >= MAX_REDIRECT_HOPS:
+                source_feed.last_result = "Redirect hop limit exceeded"
+                source_feed.interval += 60
+                return ret
+
+            raw_location = ret.headers["Location"]
+            resolved = resolve_feed_redirect_location(raw_location, current_url)
+            safe, failure_reason = validate_http_redirect_target(
+                resolved, resolve_hostname=True
+            )
+            if not safe:
+                source_feed.last_result = failure_reason
+                source_feed.interval += 60
+                return ret
+            if resolved in visited_urls:
+                source_feed.last_result = "Redirect loop detected"
+                source_feed.interval += 60
+                return ret
+
+            if not new_url:
+                new_url = resolved
+            visited_urls.add(resolved)
+            ret = requests.get(
+                resolved,
+                headers=headers,
+                allow_redirects=False,
+                timeout=20,
+                verify=VERIFY_HTTPS,
+            )
+            source_feed.status_code = ret.status_code
+            current_url = ret.url or resolved
+            visited_urls.add(current_url)
+            redirect_hops += 1
+
         source_feed.last_result = ("Temporary Redirect to " + new_url)[:255]
 
         if source_feed.last_302_url == new_url:
