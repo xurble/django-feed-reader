@@ -2,6 +2,8 @@
 
 from django.db import migrations, models
 
+from ._legacy_duplicate_preflight import preflight_legacy_duplicates
+
 
 class Migration(migrations.Migration):
     dependencies = [
@@ -9,6 +11,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(
+            preflight_legacy_duplicates,
+            migrations.RunPython.noop,
+        ),
         migrations.AddConstraint(
             model_name="post",
             constraint=models.UniqueConstraint(

@@ -36,3 +36,43 @@ jobs:
           DJANGO_SETTINGS_MODULE: tests.settings
         run: |
           pytest -v --tb=short
+
+  mysql-migrations:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: django_feed_reader
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "Django>=4.2,<5" mysqlclient
+          pip install -e ".[test]"
+
+      - name: Run MySQL migration tests
+        env:
+          DJANGO_SETTINGS_MODULE: tests.mysql_settings
+          MYSQL_DATABASE: django_feed_reader
+          MYSQL_USER: root
+          MYSQL_PASSWORD: root
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3306
+        run: |
+          pytest feeds/tests/test_migrations.py -v --tb=short
