@@ -1,0 +1,20 @@
+{
+    "version": "https://jsonfeed.org/version/1.1",
+    "title": "Attachment cycle",
+    "home_page_url": "https://example.org/",
+    "items": [
+        {
+            "id": "attachment-cycle-item",
+            "title": "Attachment cycle item",
+            "content_text": "An attachment that changes over time.",
+            "url": "https://example.org/attachment-cycle-item",
+            "attachments": [
+                {
+                    "url": "https://example.org/attachment-a.mp3",
+                    "mime_type": "audio/mpeg",
+                    "size_in_bytes": 100
+                }
+            ]
+        }
+    ]
+}

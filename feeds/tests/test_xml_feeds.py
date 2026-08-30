@@ -371,6 +371,25 @@ class XMLFeedsTest(BaseTest):
             "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba_new.jpeg",
         )
 
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="media_content.xml",
+            content_type="application/rss+xml",
+        )
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        post = src.posts.all()[0]
+        self.assertEqual(post.enclosures.count(), 2)
+        self.assertEqual(post.current_enclosures.count(), 1)
+        self.assertEqual(post.old_enclosures.count(), 1)
+        self.assertEqual(
+            post.current_enclosures.get().href,
+            "https://static.toot.community/media_attachments/files/111/981/336/553/711/283/original/d83ded1af64141ba.jpeg",
+        )
+
     def test_save_json(self, mock):
 
         settings.FEEDS_SAVE_JSON = True

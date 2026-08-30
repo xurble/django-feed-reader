@@ -167,6 +167,7 @@ def _batch_sync_enclosures_normalized(
         for pe in items:
             if pe["href"] == ee.href and ee.href not in seen_files:
                 found_enclosure = True
+                ee.is_current = True
                 ee.length = pe["length"]
                 if "type" in pe:
                     ee.type = pe["type"]
