@@ -22,12 +22,16 @@ class AddFieldIfMissing(migrations.AddField):
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
         model = to_state.apps.get_model(app_label, self.model_name)
-        if not _column_exists(schema_editor, model._meta.db_table, self.name):
+        if self.allow_migrate_model(schema_editor.connection.alias, model) and not (
+            _column_exists(schema_editor, model._meta.db_table, self.name)
+        ):
             super().database_forwards(app_label, schema_editor, from_state, to_state)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
         model = from_state.apps.get_model(app_label, self.model_name)
-        if _column_exists(schema_editor, model._meta.db_table, self.name):
+        if self.allow_migrate_model(
+            schema_editor.connection.alias, model
+        ) and _column_exists(schema_editor, model._meta.db_table, self.name):
             super().database_backwards(app_label, schema_editor, from_state, to_state)
 
 
@@ -36,14 +40,18 @@ class AddConstraintIfMissing(migrations.AddConstraint):
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
         model = to_state.apps.get_model(app_label, self.model_name)
-        if not _constraint_exists(
-            schema_editor, model._meta.db_table, self.constraint.name
+        if self.allow_migrate_model(schema_editor.connection.alias, model) and not (
+            _constraint_exists(
+                schema_editor, model._meta.db_table, self.constraint.name
+            )
         ):
             super().database_forwards(app_label, schema_editor, from_state, to_state)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
-        model = from_state.apps.get_model(app_label, self.model_name)
-        if _constraint_exists(
+        model = to_state.apps.get_model(app_label, self.model_name)
+        if self.allow_migrate_model(
+            schema_editor.connection.alias, model
+        ) and _constraint_exists(
             schema_editor, model._meta.db_table, self.constraint.name
         ):
             super().database_backwards(app_label, schema_editor, from_state, to_state)

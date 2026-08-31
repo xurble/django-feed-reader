@@ -5,8 +5,22 @@ from django.conf import settings
 from django.db import connection, connections, models
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
+
+
+class DenyFeedsOnOtherRouter:
+    def allow_migrate(self, database, app_label, **hints):
+        if database == "other" and app_label == "feeds":
+            return False
+        return None
+
+
+class DenyFeedModelsOnOtherRouter:
+    def allow_migrate(self, database, app_label, model_name=None, **hints):
+        if database == "other" and app_label == "feeds" and model_name is not None:
+            return False
+        return None
 
 
 class LegacyDuplicatePreflightMigrationTests(TransactionTestCase):
@@ -259,6 +273,48 @@ class NonDefaultDatabaseMigrationTests(TransactionTestCase):
             LatestPost.objects.using(self.database_alias).get(pk=post.pk).guid_digest,
             hashlib.sha256(b"other-database-guid").hexdigest(),
         )
+
+
+class RoutedOutDatabaseMigrationTests(TransactionTestCase):
+    databases = {"default", "other"}
+    database_alias = "other"
+    migrate_latest = ("feeds", "0019_performance_indexes")
+
+    def setUp(self):
+        super().setUp()
+        self.database = connections[self.database_alias]
+        MigrationExecutor(self.database).migrate([("feeds", None)])
+        self.addCleanup(self._restore_latest_schema)
+
+    def _restore_latest_schema(self):
+        MigrationRecorder(self.database).migration_qs.filter(app="feeds").delete()
+        MigrationExecutor(self.database).migrate([self.migrate_latest])
+
+    @override_settings(
+        DATABASE_ROUTERS=[
+            "feeds.tests.test_migrations.DenyFeedsOnOtherRouter",
+        ]
+    )
+    def test_routed_out_database_does_not_access_feed_tables(self):
+        MigrationExecutor(self.database).migrate([self.migrate_latest])
+
+        with self.database.cursor() as cursor:
+            table_names = self.database.introspection.table_names(cursor)
+        self.assertNotIn("feeds_source", table_names)
+        self.assertNotIn("feeds_post", table_names)
+
+    @override_settings(
+        DATABASE_ROUTERS=[
+            "feeds.tests.test_migrations.DenyFeedModelsOnOtherRouter",
+        ]
+    )
+    def test_model_routed_out_database_skips_run_python_queries(self):
+        MigrationExecutor(self.database).migrate([self.migrate_latest])
+
+        with self.database.cursor() as cursor:
+            table_names = self.database.introspection.table_names(cursor)
+        self.assertNotIn("feeds_source", table_names)
+        self.assertNotIn("feeds_post", table_names)
 
 
 @skipUnless(connection.vendor == "mysql", "MySQL-specific migration recovery")

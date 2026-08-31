@@ -3,7 +3,7 @@
 
 import hashlib
 
-from django.db import migrations, models
+from django.db import migrations, models, router
 
 from ._idempotent_operations import AddConstraintIfMissing, AddFieldIfMissing
 from ._legacy_duplicate_preflight import preflight_legacy_duplicates
@@ -16,6 +16,8 @@ def _digest(guid: str) -> str:
 def forwards_fill_guid_digest(apps, schema_editor):
     database_alias = schema_editor.connection.alias
     Post = apps.get_model("feeds", "Post")
+    if not router.allow_migrate_model(database_alias, Post):
+        return
     posts = Post.objects.using(database_alias)
     for pk, guid in posts.values_list("id", "guid").iterator(chunk_size=500):
         if guid is None:
@@ -26,6 +28,8 @@ def forwards_fill_guid_digest(apps, schema_editor):
 def backwards_clear_guid_digest(apps, schema_editor):
     database_alias = schema_editor.connection.alias
     Post = apps.get_model("feeds", "Post")
+    if not router.allow_migrate_model(database_alias, Post):
+        return
     Post.objects.using(database_alias).update(guid_digest=None)
 
 

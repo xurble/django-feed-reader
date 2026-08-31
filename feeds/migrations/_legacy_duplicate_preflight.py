@@ -1,3 +1,4 @@
+from django.db import router
 from django.db.models import Count
 
 
@@ -34,49 +35,52 @@ def preflight_legacy_duplicates(apps, schema_editor):
 
     problems = []
 
-    group_count, examples = _duplicate_groups(Source, ("feed_url",), database_alias)
-    if group_count:
-        problems.append(
-            "Duplicate Source.feed_url values "
-            f"({group_count} group(s); showing at most 5):\n"
-            f"{_format_examples(examples, 'source_ids')}\n"
-            "  Remediation: choose one canonical Source in each group; move or "
-            "merge related Posts and Subscriptions, resolving any resulting "
-            "duplicate GUID or subscription groups; reconcile polling metadata, "
-            "post indexes, and read state; then delete the redundant Sources."
-        )
+    if router.allow_migrate_model(database_alias, Source):
+        group_count, examples = _duplicate_groups(Source, ("feed_url",), database_alias)
+        if group_count:
+            problems.append(
+                "Duplicate Source.feed_url values "
+                f"({group_count} group(s); showing at most 5):\n"
+                f"{_format_examples(examples, 'source_ids')}\n"
+                "  Remediation: choose one canonical Source in each group; move or "
+                "merge related Posts and Subscriptions, resolving any resulting "
+                "duplicate GUID or subscription groups; reconcile polling metadata, "
+                "post indexes, and read state; then delete the redundant Sources."
+            )
 
-    group_count, examples = _duplicate_groups(
-        Post,
-        ("source_id", "guid"),
-        database_alias,
-        guid__isnull=False,
-    )
-    if group_count:
-        problems.append(
-            "Duplicate Post (source_id, guid) values "
-            f"({group_count} group(s); showing at most 5):\n"
-            f"{_format_examples(examples, 'post_ids')}\n"
-            "  Remediation: choose one canonical Post in each group; move or "
-            "merge every related Enclosure and preserve the intended content, "
-            "index, and read-state semantics; then delete the redundant Posts."
+    if router.allow_migrate_model(database_alias, Post):
+        group_count, examples = _duplicate_groups(
+            Post,
+            ("source_id", "guid"),
+            database_alias,
+            guid__isnull=False,
         )
+        if group_count:
+            problems.append(
+                "Duplicate Post (source_id, guid) values "
+                f"({group_count} group(s); showing at most 5):\n"
+                f"{_format_examples(examples, 'post_ids')}\n"
+                "  Remediation: choose one canonical Post in each group; move or "
+                "merge every related Enclosure and preserve the intended content, "
+                "index, and read-state semantics; then delete the redundant Posts."
+            )
 
-    group_count, examples = _duplicate_groups(
-        Subscription,
-        ("user_id", "source_id"),
-        database_alias,
-        source_id__isnull=False,
-    )
-    if group_count:
-        problems.append(
-            "Duplicate Subscription (user_id, source_id) values "
-            f"({group_count} group(s); showing at most 5):\n"
-            f"{_format_examples(examples, 'subscription_ids')}\n"
-            "  Remediation: choose one canonical Subscription in each group and "
-            "reconcile last_read, name, parent, and is_river before deleting the "
-            "redundant Subscriptions."
+    if router.allow_migrate_model(database_alias, Subscription):
+        group_count, examples = _duplicate_groups(
+            Subscription,
+            ("user_id", "source_id"),
+            database_alias,
+            source_id__isnull=False,
         )
+        if group_count:
+            problems.append(
+                "Duplicate Subscription (user_id, source_id) values "
+                f"({group_count} group(s); showing at most 5):\n"
+                f"{_format_examples(examples, 'subscription_ids')}\n"
+                "  Remediation: choose one canonical Subscription in each group and "
+                "reconcile last_read, name, parent, and is_river before deleting the "
+                "redundant Subscriptions."
+            )
 
     if problems:
         raise RuntimeError(
