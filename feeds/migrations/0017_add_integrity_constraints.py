@@ -2,6 +2,9 @@
 
 from django.db import migrations, models
 
+from ._idempotent_operations import AddConstraintIfMissing
+from ._legacy_duplicate_preflight import preflight_legacy_duplicates
+
 
 class Migration(migrations.Migration):
     dependencies = [
@@ -9,7 +12,11 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddConstraint(
+        migrations.RunPython(
+            preflight_legacy_duplicates,
+            migrations.RunPython.noop,
+        ),
+        AddConstraintIfMissing(
             model_name="post",
             constraint=models.UniqueConstraint(
                 condition=models.Q(("guid__isnull", False)),
@@ -17,13 +24,13 @@ class Migration(migrations.Migration):
                 name="feeds_post_unique_source_guid_when_guid_present",
             ),
         ),
-        migrations.AddConstraint(
+        AddConstraintIfMissing(
             model_name="source",
             constraint=models.UniqueConstraint(
                 fields=("feed_url",), name="feeds_source_unique_feed_url"
             ),
         ),
-        migrations.AddConstraint(
+        AddConstraintIfMissing(
             model_name="subscription",
             constraint=models.UniqueConstraint(
                 condition=models.Q(("source__isnull", False)),
