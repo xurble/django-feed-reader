@@ -340,6 +340,7 @@ def _read_feed_finalize_interval_and_save(
         update_fields=[
             "due_poll",
             "interval",
+            "last_polled",
             "last_result",
             "last_modified",
             "etag",

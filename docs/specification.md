@@ -307,9 +307,6 @@ Evidence: `AGENTS.md`; `setup.py`; `feeds/models.py`;
 
 ## 10. Suspected defects, contradictions, and coverage gaps
 
-- **GAP-002 — `last_polled` persistence:** `read_feed` assigns `last_polled`, but the
-  final partial save omits that field, so the assignment is not persisted by the
-  observed path.
 - **GAP-003 — Subscription tree integrity:** cross-user parent relationships and
   cycles are not rejected by model validation or database constraints.
 - **GAP-004 — Ignored pagination direction:**

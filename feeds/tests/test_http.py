@@ -49,6 +49,7 @@ class HTTPStuffTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
+        self.assertIsNotNone(src.last_polled)
         self.assertEqual(src.status_code, 200)
         self.assertEqual(src.posts.count(), 1)  # got the one post
         self.assertEqual(src.interval, 60)
@@ -111,6 +112,7 @@ class HTTPStuffTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
+        self.assertIsNotNone(src.last_polled)
         self.assertEqual(src.status_code, 0)
         self.assertTrue(src.last_result.startswith("Fetch error:"))
 
@@ -126,6 +128,7 @@ class HTTPStuffTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
+        self.assertIsNotNone(src.last_polled)
         self.assertEqual(src.status_code, 400)
         self.assertFalse(src.live)
         self.assertIn("400", src.last_result)
