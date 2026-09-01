@@ -240,9 +240,10 @@ Evidence: enclosure synchronization in `feeds/utils_internal.py`;
 - **SUB-006** — Root subscription listing shall order river subscriptions first,
   then by name. Unread listing shall omit read non-river sources and empty folders,
   while retaining river subscriptions.
-- **SUB-007** — Subscription folders are expected to represent a hierarchy for one
-  user, but same-user and acyclic parentage are not enforced. Intended invariants
-  are subject to assumption A-003.
+- **SUB-007** — Subscription parents shall be folders belonging to the same user,
+  and model saves shall reject self-parenting and ancestor cycles. Tree traversal
+  shall terminate defensively when model validation has been bypassed by legacy or
+  external database writes.
 
 Evidence: `feeds/models.py`; `feeds/utils.py`;
 `feeds/tests/test_subscriptions.py`.
@@ -345,21 +346,6 @@ Impact if wrong: whether transient authentication, permission, and rate-limit
 failures permanently stop polling.
 
 Question: Which 4xx responses should disable a source rather than remain retryable?
-
-### A-003 — Subscription tree integrity
-
-Provisional interpretation: folder relationships are intended to form same-user,
-acyclic trees despite the lack of enforcement.
-
-Evidence: per-user traversal helpers and nested-folder tests; no matching model or
-database constraint.
-
-Confidence: high.
-
-Impact if wrong: authorization boundaries, unread aggregation, cascade deletion,
-and traversal termination.
-
-Question: Must a parent belong to the same user, and must cycles be rejected?
 
 ### A-004 — URL safety boundary
 

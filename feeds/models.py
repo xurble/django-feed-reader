@@ -6,8 +6,9 @@ from urllib.parse import urlencode
 
 import django.utils as django_utils
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.paginator import EmptyPage, InvalidPage, Paginator
-from django.db import models
+from django.db import models, router
 from django.db.models import Q
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
@@ -471,6 +472,100 @@ class Subscription(models.Model):
     name = models.CharField(max_length=255)
     """**str** The display name of the subscription - typically should be set to the name of the source where present"""
 
+    def _validate_parent_relationship(self, using=None):
+        database = using or self._state.db or router.db_for_read(
+            type(self), instance=self
+        )
+        if self.parent_id is not None:
+            seen = {self.pk} if self.pk is not None else set()
+            ancestor_id = self.parent_id
+
+            while ancestor_id is not None:
+                if ancestor_id in seen:
+                    raise ValidationError(
+                        {"parent": "A subscription parent cannot create a cycle."}
+                    )
+                seen.add(ancestor_id)
+
+                ancestor = (
+                    type(self).objects.using(database)
+                    .filter(pk=ancestor_id)
+                    .values("parent_id", "source_id", "user_id")
+                    .first()
+                )
+                if ancestor is None:
+                    break
+                if (
+                    self.user_id is not None
+                    and ancestor["user_id"] != self.user_id
+                ):
+                    raise ValidationError(
+                        {
+                            "parent": (
+                                "A subscription parent must belong to the same user."
+                            )
+                        }
+                    )
+                if ancestor["source_id"] is not None:
+                    raise ValidationError(
+                        {"parent": "A subscription parent must be a folder."}
+                    )
+                ancestor_id = ancestor["parent_id"]
+
+        if self.pk is None:
+            return
+
+        children = type(self).objects.using(database).filter(parent_id=self.pk)
+        if self.source_id is not None and children.exists():
+            raise ValidationError(
+                {"source": "A subscription with children must remain a folder."}
+            )
+        has_other_user_children = (
+            self.user_id is not None
+            and children.exclude(user_id=self.user_id).exists()
+        )
+        if has_other_user_children:
+            raise ValidationError(
+                {"user": "A subscription parent must have the same user as its children."}
+            )
+
+    def clean(self):
+        super().clean()
+        self._validate_parent_relationship()
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        relationship_fields = {
+            "parent",
+            "parent_id",
+            "source",
+            "source_id",
+            "user",
+            "user_id",
+        }
+        if update_fields is None or relationship_fields.intersection(update_fields):
+            self._validate_parent_relationship(using=kwargs.get("using"))
+        super().save(*args, **kwargs)
+
+    def _descendants(self, children_by_parent=None):
+        """Yield each descendant once, even if stored parent data has a cycle."""
+        if children_by_parent is None:
+            children_by_parent = _subscription_children_by_parent(self.user_id)
+
+        seen = {self.pk}
+        stack = list(children_by_parent.get(self.pk, []))
+        while stack:
+            sub = stack.pop()
+            if sub.pk in seen:
+                continue
+            seen.add(sub.pk)
+            yield sub
+            stack.extend(children_by_parent.get(sub.pk, []))
+
+    def _tree_members(self, children_by_parent=None):
+        yield self
+        yield from self._descendants(children_by_parent)
+
     @property
     def unread_count(self) -> int:
         """**int** The number of undread posts in teh subscription
@@ -485,12 +580,9 @@ class Subscription(models.Model):
         # One query for the whole user tree instead of one query per folder level.
         by_parent = _subscription_children_by_parent(self.user_id)
         total = 0
-        stack = list(by_parent.get(self.id, []))
-        while stack:
-            sub = stack.pop()
+        for sub in self._descendants(by_parent):
             if sub.source_id:
                 total += sub.source.max_index - sub.last_read
-            stack.extend(by_parent.get(sub.id, []))
         self._unread_count = total
         return self._unread_count
 
@@ -499,16 +591,16 @@ class Subscription(models.Model):
         if children_by_parent is None:
             children_by_parent = _subscription_children_by_parent(self.user_id)
 
-        if self.source:
-            posts = list(
-                Post.objects.filter(Q(source=self.source) & Q(index__gt=self.last_read))
-            )
-            for post in posts:
-                post.from_subscription = self
-                post_list.append(post)
-
-        for child in children_by_parent.get(self.id, []):
-            child._gather_posts(post_list, children_by_parent)
+        for sub in self._tree_members(children_by_parent):
+            if sub.source:
+                posts = list(
+                    Post.objects.filter(
+                        Q(source=sub.source) & Q(index__gt=sub.last_read)
+                    )
+                )
+                for post in posts:
+                    post.from_subscription = sub
+                    post_list.append(post)
 
     def get_unread_posts(self, oldest_first=True):
         """Returns all the unread posts in a subscription"""
@@ -523,11 +615,9 @@ class Subscription(models.Model):
         if children_by_parent is None:
             children_by_parent = _subscription_children_by_parent(self.user_id)
 
-        if self.source:
-            source_list[self.source.id] = self
-
-        for child in children_by_parent.get(self.id, []):
-            child._gather_sources(source_list, children_by_parent)
+        for sub in self._tree_members(children_by_parent):
+            if sub.source:
+                source_list[sub.source.id] = sub
 
     def get_paginated_posts(
         self, page: int, oldest_first: bool = True, posts_per_page: int = 20
@@ -573,14 +663,11 @@ class Subscription(models.Model):
             self.save(update_fields=["last_read"])
             return
         by_parent = _subscription_children_by_parent(self.user_id)
-        stack = list(by_parent.get(self.id, []))
         to_update = []
-        while stack:
-            sub = stack.pop()
+        for sub in self._descendants(by_parent):
             if sub.source_id and sub.last_read != sub.source.max_index:
                 sub.last_read = sub.source.max_index
                 to_update.append(sub)
-            stack.extend(by_parent.get(sub.id, []))
         if to_update:
             Subscription.objects.bulk_update(to_update, ["last_read"])
 

@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import requests_mock
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from feeds.models import Post, Source, Subscription
@@ -482,3 +483,213 @@ class SubscriptionsTest(BaseTest):
         self.assertEqual(len(posts_newest), 1)
         self.assertEqual(len(posts_oldest), 1)
         self.assertEqual(posts_newest[0].id, posts_oldest[0].id)
+
+
+class SubscriptionParentValidationTest(BaseTest):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user(username="subscription-owner")
+        self.other_user = User.objects.create_user(username="other-owner")
+
+    def test_subscription_cannot_be_its_own_parent(self):
+        folder = Subscription.objects.create(
+            user=self.user, source=None, name="Folder"
+        )
+
+        folder.parent = folder
+
+        with self.assertRaises(ValidationError):
+            folder.save()
+
+    def test_subscription_parent_cannot_create_ancestor_cycle(self):
+        parent = Subscription.objects.create(
+            user=self.user, source=None, name="Parent"
+        )
+        child = Subscription.objects.create(
+            user=self.user, source=None, name="Child", parent=parent
+        )
+
+        parent.parent = child
+
+        with self.assertRaises(ValidationError):
+            parent.save()
+
+    def test_subscription_parent_must_belong_to_same_user(self):
+        other_users_folder = Subscription.objects.create(
+            user=self.other_user, source=None, name="Other user's folder"
+        )
+
+        with self.assertRaises(ValidationError):
+            Subscription.objects.create(
+                user=self.user,
+                source=None,
+                name="Cross-user child",
+                parent=other_users_folder,
+            )
+
+    def test_subscription_parent_must_be_a_folder(self):
+        source = Source.objects.create(
+            name="Parent feed", feed_url=feed_url_for("non-folder-parent")
+        )
+        feed_subscription = Subscription.objects.create(
+            user=self.user, source=source, name="Feed"
+        )
+
+        with self.assertRaises(ValidationError):
+            Subscription.objects.create(
+                user=self.user,
+                source=None,
+                name="Child folder",
+                parent=feed_subscription,
+            )
+
+    def test_parent_folder_cannot_be_changed_to_feed(self):
+        source = Source.objects.create(
+            name="Replacement feed",
+            feed_url=feed_url_for("folder-changed-to-feed"),
+        )
+        parent = Subscription.objects.create(
+            user=self.user, source=None, name="Parent"
+        )
+        Subscription.objects.create(
+            user=self.user, source=None, name="Child", parent=parent
+        )
+
+        parent.source = source
+
+        with self.assertRaises(ValidationError):
+            parent.save(update_fields=["source"])
+
+    def test_parent_folder_cannot_be_changed_to_another_user(self):
+        parent = Subscription.objects.create(
+            user=self.user, source=None, name="Parent"
+        )
+        Subscription.objects.create(
+            user=self.user, source=None, name="Child", parent=parent
+        )
+
+        parent.user = self.other_user
+
+        with self.assertRaises(ValidationError):
+            parent.save(update_fields=["user"])
+
+    def test_valid_nested_subscription_tree(self):
+        source = Source.objects.create(
+            name="Nested feed",
+            feed_url=feed_url_for("valid-nested-tree"),
+            max_index=1,
+        )
+        root = Subscription.objects.create(
+            user=self.user, source=None, name="Root"
+        )
+        child = Subscription.objects.create(
+            user=self.user, source=None, name="Child", parent=root
+        )
+        Subscription.objects.create(
+            user=self.user, source=source, name="Feed", parent=child
+        )
+
+        self.assertEqual(root.unread_count, 1)
+        self.assertEqual(get_unread_subscription_list_for_user(self.user), [root])
+
+
+class MalformedSubscriptionTraversalTest(BaseTest):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user(username="legacy-owner")
+
+    def test_tree_traversals_terminate_for_legacy_cycle(self):
+        source = Source.objects.create(
+            name="Legacy feed",
+            feed_url=feed_url_for("legacy-cycle"),
+        )
+        post = Post.objects.create(
+            source=source,
+            title="Unread post",
+            body="",
+            created=timezone.now(),
+            index=None,
+        )
+        first = Subscription.objects.create(
+            user=self.user, source=None, name="First"
+        )
+        second = Subscription.objects.create(
+            user=self.user, source=None, name="Second", parent=first
+        )
+        feed = Subscription.objects.create(
+            user=self.user, source=source, name="Feed", parent=second
+        )
+        Subscription.objects.filter(pk=first.pk).update(parent=second)
+        first.refresh_from_db()
+
+        self.assertEqual(first.unread_count, 1)
+        self.assertEqual(first.get_unread_posts(), [post])
+        posts, paginator = first.get_paginated_posts(1)
+        self.assertEqual(list(posts), [post])
+        self.assertEqual(paginator.count, 1)
+
+        first.mark_read()
+
+        feed.refresh_from_db()
+        self.assertEqual(feed.last_read, source.max_index)
+
+    def test_unread_list_ignores_malformed_legacy_relationships(self):
+        other_user = User.objects.create_user(username="other-legacy-owner")
+        valid_source = Source.objects.create(
+            name="Valid feed",
+            feed_url=feed_url_for("valid-legacy-list-root"),
+            max_index=1,
+        )
+        invalid_parent_source = Source.objects.create(
+            name="Invalid parent feed",
+            feed_url=feed_url_for("invalid-legacy-list-parent"),
+        )
+        valid_root = Subscription.objects.create(
+            user=self.user, source=None, name="Valid root"
+        )
+        Subscription.objects.create(
+            user=self.user,
+            source=valid_source,
+            name="Valid feed",
+            parent=valid_root,
+        )
+        other_users_folder = Subscription.objects.create(
+            user=other_user, source=None, name="Other user's folder"
+        )
+        cross_user_folder = Subscription.objects.create(
+            user=self.user, source=None, name="Cross-user folder"
+        )
+        non_folder_parent = Subscription.objects.create(
+            user=self.user,
+            source=invalid_parent_source,
+            name="Non-folder parent",
+        )
+        child_of_non_folder = Subscription.objects.create(
+            user=self.user, source=None, name="Child of non-folder"
+        )
+        first_cycle_folder = Subscription.objects.create(
+            user=self.user, source=None, name="First cycle folder"
+        )
+        second_cycle_folder = Subscription.objects.create(
+            user=self.user,
+            source=None,
+            name="Second cycle folder",
+            parent=first_cycle_folder,
+        )
+
+        # QuerySet.update deliberately bypasses model validation to represent
+        # malformed legacy or externally written rows.
+        Subscription.objects.filter(pk=cross_user_folder.pk).update(
+            parent=other_users_folder
+        )
+        Subscription.objects.filter(pk=child_of_non_folder.pk).update(
+            parent=non_folder_parent
+        )
+        Subscription.objects.filter(pk=first_cycle_folder.pk).update(
+            parent=second_cycle_folder
+        )
+
+        self.assertEqual(
+            get_unread_subscription_list_for_user(self.user),
+            [valid_root],
+        )
