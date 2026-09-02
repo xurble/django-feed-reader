@@ -473,7 +473,7 @@ class Subscription(models.Model):
     """**str** The display name of the subscription - typically should be set to the name of the source where present"""
 
     def _validate_parent_relationship(self, using=None):
-        database = using or self._state.db or router.db_for_read(
+        database = using or self._state.db or router.db_for_write(
             type(self), instance=self
         )
         if self.parent_id is not None:
@@ -533,8 +533,15 @@ class Subscription(models.Model):
         super().clean()
         self._validate_parent_relationship()
 
-    def save(self, *args, **kwargs):
-        update_fields = kwargs.get("update_fields")
+    def save(
+        self,
+        force_insert=False,
+        force_update=False,
+        using=None,
+        update_fields=None,
+    ):
+        if update_fields is not None:
+            update_fields = frozenset(update_fields)
         relationship_fields = {
             "parent",
             "parent_id",
@@ -544,8 +551,14 @@ class Subscription(models.Model):
             "user_id",
         }
         if update_fields is None or relationship_fields.intersection(update_fields):
-            self._validate_parent_relationship(using=kwargs.get("using"))
-        super().save(*args, **kwargs)
+            database = using or router.db_for_write(type(self), instance=self)
+            self._validate_parent_relationship(using=database)
+        super().save(
+            force_insert=force_insert,
+            force_update=force_update,
+            using=using,
+            update_fields=update_fields,
+        )
 
     def _descendants(self, children_by_parent=None):
         """Yield each descendant once, even if stored parent data has a cycle."""

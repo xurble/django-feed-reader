@@ -3,6 +3,7 @@ from datetime import timedelta
 import requests_mock
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.test import override_settings
 from django.utils import timezone
 
 from feeds.models import Post, Source, Subscription
@@ -15,6 +16,18 @@ from feeds.utils import (
 from .base import BaseTest, NullOutput
 
 User = get_user_model()
+
+
+class SubscriptionReadDefaultWriteOtherRouter:
+    def db_for_read(self, model, **hints):
+        if model is Subscription:
+            return "default"
+        return None
+
+    def db_for_write(self, model, **hints):
+        if model is Subscription:
+            return "other"
+        return None
 
 
 def feed_url_for(label):
@@ -693,3 +706,73 @@ class MalformedSubscriptionTraversalTest(BaseTest):
             get_unread_subscription_list_for_user(self.user),
             [valid_root],
         )
+
+
+class SubscriptionSaveCompatibilityTest(BaseTest):
+    databases = {"default", "other"}
+
+    def _other_database_users(self):
+        parent_owner = User.objects.db_manager("other").create_user(
+            username="other-parent-owner"
+        )
+        child_owner = User.objects.db_manager("other").create_user(
+            username="other-child-owner"
+        )
+        return parent_owner, child_owner
+
+    @override_settings(DATABASE_ROUTERS=[SubscriptionReadDefaultWriteOtherRouter()])
+    def test_save_validates_on_routed_write_database(self):
+        parent_owner, child_owner = self._other_database_users()
+        parent = Subscription.objects.using("other").create(
+            user_id=parent_owner.pk,
+            source=None,
+            name="Other database parent",
+        )
+        child = Subscription(
+            user_id=child_owner.pk,
+            source=None,
+            name="Other database child",
+            parent_id=parent.pk,
+        )
+
+        with self.assertRaises(ValidationError):
+            child.save()
+
+        self.assertFalse(
+            Subscription.objects.using("other").filter(name=child.name).exists()
+        )
+
+    def test_save_honors_positional_database_argument_during_validation(self):
+        parent_owner, child_owner = self._other_database_users()
+        parent = Subscription.objects.using("other").create(
+            user_id=parent_owner.pk,
+            source=None,
+            name="Positional database parent",
+        )
+        child = Subscription(
+            user_id=child_owner.pk,
+            source=None,
+            name="Positional database child",
+            parent_id=parent.pk,
+        )
+
+        with self.assertRaises(ValidationError):
+            child.save(False, False, "other")
+
+        self.assertFalse(
+            Subscription.objects.using("other").filter(name=child.name).exists()
+        )
+
+    def test_save_preserves_generator_update_fields(self):
+        user = User.objects.create_user(username="generator-update-fields")
+        subscription = Subscription.objects.create(
+            user=user,
+            source=None,
+            name="Before",
+        )
+        subscription.name = "After"
+
+        subscription.save(update_fields=(field for field in ["name"]))
+
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.name, "After")
