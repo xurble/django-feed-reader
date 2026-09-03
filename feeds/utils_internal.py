@@ -2,8 +2,10 @@ import datetime
 import hashlib
 import json
 import logging
+import math
 import time
-from typing import TextIO
+from email.utils import parsedate_to_datetime
+from typing import Optional, TextIO
 
 import feedparser as parser
 import pyrfc3339
@@ -52,6 +54,46 @@ def _positive_int_setting(name: str, default: int) -> int:
 def _pagination_limit(name: str, value: int) -> str:
     unit = name[:-1] if value == 1 else name
     return f"Pagination stopped at {value} {unit}"
+
+
+def parse_retry_after_minutes(value: Optional[str]) -> Optional[int]:
+    """Parse a ``Retry-After`` header value into whole minutes to wait.
+
+    Accepts either the delay-seconds form (an integer) or the HTTP-date
+    form. Returns ``None`` if ``value`` is missing or cannot be parsed as
+    either form.
+    """
+    if not value:
+        return None
+
+    value = value.strip()
+
+    try:
+        seconds = int(value)
+    except ValueError:
+        seconds = None
+
+    if seconds is not None:
+        if seconds < 0:
+            return None
+        return max(1, math.ceil(seconds / 60))
+
+    try:
+        retry_date = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    if retry_date is None:
+        return None
+
+    if retry_date.tzinfo is None:
+        retry_date = retry_date.replace(tzinfo=datetime.timezone.utc)
+
+    delta_seconds = (retry_date - timezone.now()).total_seconds()
+    if delta_seconds <= 0:
+        return 1
+
+    return max(1, math.ceil(delta_seconds / 60))
 
 
 def _next_feed_page(feed, current_url: str):

@@ -148,7 +148,7 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.status_code, 401)
         self.assertFalse(src.live)
 
-    def test_http_429_disables_feed(self, mock):
+    def test_http_429_keeps_feed_live(self, mock):
 
         self._populate_mock(
             mock, status=429, test_file="empty_file.txt", content_type="text/plain"
@@ -161,7 +161,98 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(src.status_code, 429)
-        self.assertFalse(src.live)
+        self.assertTrue(src.live)
+        self.assertIn("Rate limited", src.last_result)
+        # No Retry-After header, so it falls back to the default bounded backoff.
+        self.assertEqual(src.interval, 120)
+        self.assertGreater(src.due_poll, timezone.now())
+
+    def test_http_429_honors_retry_after_seconds(self, mock):
+
+        self._populate_mock(
+            mock,
+            status=429,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Retry-After": "5400"},  # 90 minutes
+        )
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        before = timezone.now()
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 429)
+        self.assertTrue(src.live)
+        self.assertEqual(src.interval, 90)
+        self.assertGreaterEqual(
+            src.due_poll, before + timedelta(minutes=90) - timedelta(seconds=5)
+        )
+
+    def test_http_429_honors_retry_after_http_date(self, mock):
+
+        retry_at = timezone.now() + timedelta(minutes=90)
+
+        self._populate_mock(
+            mock,
+            status=429,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Retry-After": retry_at.strftime("%a, %d %b %Y %H:%M:%S GMT")},
+        )
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 429)
+        self.assertTrue(src.live)
+        self.assertEqual(src.interval, 90)
+
+    def test_http_429_bounds_excessive_retry_after(self, mock):
+
+        self._populate_mock(
+            mock,
+            status=429,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Retry-After": str(60 * 60 * 24 * 30)},  # 30 days
+        )
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 429)
+        self.assertTrue(src.live)
+        # The maximum poll interval (24h) still applies.
+        self.assertEqual(src.interval, 60 * 24)
+
+    def test_http_429_ignores_invalid_retry_after(self, mock):
+
+        self._populate_mock(
+            mock,
+            status=429,
+            test_file="empty_file.txt",
+            content_type="text/plain",
+            headers={"Retry-After": "not-a-valid-value"},
+        )
+
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.status_code, 429)
+        self.assertTrue(src.live)
+        self.assertEqual(src.interval, 120)
 
     def test_not_a_feed(self, mock):
 

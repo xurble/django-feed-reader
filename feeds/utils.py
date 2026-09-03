@@ -18,6 +18,7 @@ from feeds.utils_internal import (
     VERIFY_HTTPS,
     get_agent,
     parse_feed,
+    parse_retry_after_minutes,
 )
 
 DRIPFEED_KEY = None
@@ -238,6 +239,16 @@ def _read_feed_process_http_response(
             source_feed.last_result = "Feed is no longer accessible."
             source_feed.live = False
 
+    elif ret.status_code == 429:
+        retry_minutes = parse_retry_after_minutes(ret.headers.get("Retry-After"))
+        if retry_minutes is not None:
+            source_feed.interval = max(source_feed.interval, retry_minutes)
+            source_feed.last_result = (
+                "Rate limited (429), retrying in %d minute(s)" % retry_minutes
+            )
+        else:
+            source_feed.interval += 120
+            source_feed.last_result = "Rate limited (429)"
     elif ret.status_code >= 400 and ret.status_code < 500:
         source_feed.live = False
         source_feed.last_result = "Bad request (%d)" % ret.status_code
