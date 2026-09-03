@@ -511,6 +511,7 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
                 grp._unread_count += sub.unread_count
 
     while len(groups.keys()) > 0:
+        made_progress = False
         for key in list(groups.keys()):
             folder = groups[key]
             found = False
@@ -524,9 +525,15 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
             if not found:
                 # This folder does not have any children
                 if folder.parent_id is not None:
-                    parent = groups[folder.parent_id]
-                    parent._unread_count += folder._unread_count
+                    parent = groups.get(folder.parent_id)
+                    if parent is not None:
+                        parent._unread_count += folder._unread_count
                 groups.pop(folder.id)
+                made_progress = True
+        if not made_progress:
+            # Malformed legacy parent cycles have no leaf to reduce. They are not
+            # root subscriptions, so leave them out rather than looping forever.
+            break
 
     return [
         s for s in subs_list if s.unread_count > 0 or s.is_river
