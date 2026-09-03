@@ -776,3 +776,76 @@ class SubscriptionSaveCompatibilityTest(BaseTest):
 
         subscription.refresh_from_db()
         self.assertEqual(subscription.name, "After")
+
+
+class SubscriberCountTest(BaseTest):
+    """Regression tests for num_subs recalculation when subscriptions change source."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user("countuser", "c@example.com", "pass")
+        self.source_a = Source.objects.create(
+            name="Source A", feed_url="http://a.example.com/feed"
+        )
+        self.source_b = Source.objects.create(
+            name="Source B", feed_url="http://b.example.com/feed"
+        )
+
+    def test_move_subscription_updates_both_sources(self):
+        user2 = User.objects.create_user("countuser2", "c2@example.com", "pass")
+        Subscription.objects.create(user=self.user, source=self.source_a)
+        sub2 = Subscription.objects.create(user=user2, source=self.source_a)
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 2)
+
+        sub2.source = self.source_b
+        sub2.save()
+
+        self.source_a.refresh_from_db()
+        self.source_b.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+        self.assertEqual(self.source_b.num_subs, 1)
+
+    def test_clear_source_updates_old_source(self):
+        sub = Subscription.objects.create(user=self.user, source=self.source_a)
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+
+        sub.source = None
+        sub.save()
+
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 0)
+
+    def test_assign_source_updates_new_source(self):
+        sub = Subscription.objects.create(user=self.user, source=None, name="folder")
+        self.source_a.refresh_from_db()
+        # No subscriptions point to source_a yet (default num_subs=1, but
+        # the signal hasn't touched it since no sub references it).
+        # After assigning, count should reflect the new subscription.
+
+        sub.source = self.source_a
+        sub.save()
+
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+
+    def test_save_without_change_is_idempotent(self):
+        sub = Subscription.objects.create(user=self.user, source=self.source_a)
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+
+        sub.save()
+
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+
+    def test_delete_updates_source(self):
+        sub = Subscription.objects.create(user=self.user, source=self.source_a)
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+
+        sub.delete()
+
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 0)

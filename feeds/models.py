@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from django.core.paginator import EmptyPage, InvalidPage, Paginator
 from django.db import models, router
 from django.db.models import Q
-from django.db.models.signals import post_delete, post_save
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 from django.utils.deconstruct import deconstructible
 
@@ -705,6 +705,17 @@ def _subscription_children_by_parent(user_id):
     return by_parent
 
 
+@receiver(pre_save)
+def pre_save_subscriber(sender, instance, **kwargs):
+    if sender == Subscription and instance.pk is not None:
+        try:
+            instance._previous_source = Subscription.objects.get(pk=instance.pk).source
+        except Subscription.DoesNotExist:
+            instance._previous_source = None
+    elif sender == Subscription:
+        instance._previous_source = None
+
+
 @receiver(post_delete)
 def delete_subscriber(sender, instance, **kwargs):
     if sender == Subscription and instance.source is not None:
@@ -713,5 +724,11 @@ def delete_subscriber(sender, instance, **kwargs):
 
 @receiver(post_save)
 def save_subscriber(sender, instance, **kwargs):
-    if sender == Subscription and instance.source is not None:
-        instance.source.update_subscriber_count()
+    if sender != Subscription:
+        return
+    previous_source = getattr(instance, '_previous_source', None)
+    current_source = instance.source
+    if current_source is not None:
+        current_source.update_subscriber_count()
+    if previous_source is not None and previous_source != current_source:
+        previous_source.update_subscriber_count()
