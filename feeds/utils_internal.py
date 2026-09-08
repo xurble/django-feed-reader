@@ -363,19 +363,20 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
         source_feed.last_result = "Empty feed response"
         return (False, False)
 
-    try:
-        feed_text_for_json = feed_body.decode("utf-8")
-    except UnicodeDecodeError:
-        source_feed.last_result = "Feed body is not valid UTF-8"
-        return (False, False)
-
     if "xml" in content_type or feed_body[0:1] == b"<":
         (ok, changed) = parse_feed_xml(source_feed, feed_body, output)
-    elif "json" in content_type or feed_body[0:1] == b"{":
-        (ok, changed) = parse_feed_json(source_feed, feed_text_for_json, output)
     else:
-        ok = False
-        source_feed.last_result = "Unknown Feed Type: " + content_type
+        try:
+            feed_text_for_json = feed_body.decode("utf-8")
+        except UnicodeDecodeError:
+            source_feed.last_result = "Feed body is not valid UTF-8"
+            return (False, False)
+
+        if "json" in content_type or feed_body[0:1] == b"{":
+            (ok, changed) = parse_feed_json(source_feed, feed_text_for_json, output)
+        else:
+            ok = False
+            source_feed.last_result = "Unknown Feed Type: " + content_type
 
     if ok and changed:
         source_feed.last_result = " OK (updated)"  # and temporary redirects

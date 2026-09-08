@@ -1,5 +1,6 @@
 import os
 from importlib import reload
+from unittest.mock import patch
 
 import requests_mock
 from django.conf import settings
@@ -42,6 +43,29 @@ def _atom_feed(entry_ids, next_url=None):
 
 @requests_mock.Mocker()
 class XMLFeedsTest(BaseTest):
+    def test_declared_latin1_xml_reaches_feedparser_unchanged(self, mock):
+        body = '''<?xml version="1.0" encoding="ISO-8859-1"?>
+        <rss version="2.0"><channel><title>Café feed</title>
+        <link>http://feed.com/</link><description>News</description>
+        <item><title>Crème brûlée</title><guid>latin1-entry</guid>
+        <link>http://feed.com/entry</link><description>Déjà vu</description>
+        </item></channel></rss>'''.encode("iso-8859-1")
+        for index, content_type in enumerate(("application/rss+xml", "text/plain")):
+            with self.subTest(content_type=content_type):
+                url = BASE_URL + str(index)
+                mock.get(url, content=body, headers={"Content-Type": content_type})
+                src = Source.objects.create(name="test", feed_url=url, interval=0)
+                with patch.object(
+                    utils_internal.parser, "parse", wraps=utils_internal.parser.parse
+                ) as parse:
+                    read_feed(src, output=NullOutput())
+                src.refresh_from_db()
+                self.assertEqual(src.name, "Café feed")
+                self.assertEqual(src.posts.get().title, "Crème brûlée")
+                self.assertEqual(src.posts.get().body, "Déjà vu")
+                self.assertEqual(parse.call_args.args[0], body)
+                self.assertIsInstance(parse.call_args.args[0], bytes)
+
     def test_atom_follows_rel_next_on_first_parse(self, mock):
         """First full parse should follow atom:link[@rel='next'] and merge pages."""
 
