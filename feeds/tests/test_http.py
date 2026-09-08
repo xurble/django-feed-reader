@@ -627,6 +627,20 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.last_result, "Feed body is not valid UTF-8")
         self.assertEqual(src.posts.count(), 0)
 
+    def test_invalid_utf8_json_detected_by_first_byte(self, mock):
+        mock.get(
+            BASE_URL,
+            content=b'{"title":"\xff"}',
+            headers={"Content-Type": "text/plain"},
+        )
+        src = Source.objects.create(name="test", feed_url=BASE_URL, interval=0)
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.last_result, "Feed body is not valid UTF-8")
+        self.assertEqual(src.posts.count(), 0)
+
     def test_temp_redirect_relative_location(self, mock):
 
         resolved = "http://feed.com/second.xml"
