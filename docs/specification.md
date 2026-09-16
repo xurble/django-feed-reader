@@ -1,6 +1,6 @@
 # Django Feed Reader: Current-State Specification
 
-Status: Backfilled from the implementation and tests on 29 August 2026.
+Status: Revalidated against the implementation and tests on 16 September 2026.
 
 This document specifies the observable current behavior of `django-feed-reader`.
 It treats the implementation as evidence rather than automatically treating every
@@ -122,9 +122,10 @@ Evidence: model fields, constraints, save behavior, and signals in
 
 - **HTTP-006** — A 404 response shall remain retryable. A 410 response shall mark
   the source not live. Server errors and responses below 200 shall remain retryable.
-- **HTTP-007** — A non-Cloudflare 403 and other 4xx responses except 404 and 410
-  shall mark the source not live. This observed behavior is subject to assumption
-  A-002.
+- **HTTP-007** — A non-Cloudflare 403 and other 4xx responses except 404, 410,
+  and 429 shall mark the source not live. A 429 response shall remain retryable,
+  honor a valid bounded `Retry-After` value, and otherwise use the normal retry
+  backoff. This observed disabling behavior is subject to assumption A-002.
 - **HTTP-008** — A 403 response identified as Cloudflare shall mark the source as
   Cloudflare-affected without disabling it.
 
@@ -308,25 +309,37 @@ Evidence: `AGENTS.md`; `setup.py`; `feeds/models.py`;
 
 ## 10. Suspected defects, contradictions, and coverage gaps
 
-- **GAP-003 — Subscription tree integrity:** cross-user parent relationships and
-  cycles are not rejected by model validation or database constraints.
+The following open findings were revalidated against the implementation and tests
+on 16 September 2026:
+
 - **GAP-004 — Ignored pagination direction:**
-  `Subscription.get_paginated_posts(oldest_first=...)` always orders newest first.
+  `Subscription.get_paginated_posts(oldest_first=...)` still always orders newest
+  first, and subscription pagination tests do not exercise the direction argument.
 - **GAP-005 — Partial SSRF boundary:** redirect targets and their DNS results are
-  checked before each hop, but initial URLs and paginated links are not DNS-resolved
-  and redirect connections are not pinned against DNS rebinding.
-- **GAP-006 — Expired JSON polling:** an expired JSON Feed sets a three-day interval
-  internally, but normal finalization clamps it to one day and leaves the source
-  live.
-- **GAP-007 — Configuration-name contradiction:** `AGENTS.md` names unprefixed
-  `KEEP_OLD_ENCLOSURES`, `SAVE_JSON`, and `DRIPFEED_KEY`, while implementation and
-  user documentation use `FEEDS_`-prefixed names.
-- **GAP-008 — Untested legacy helpers:** presentation-oriented `garden_style`,
-  `health_box`, and `recast_link` behavior remains in the model API despite comments
-  identifying application-specific legacy coupling. Only health-style basics are
-  covered by tests.
+  checked before each hop. Initial source URLs are not validated before requests;
+  pagination links receive structural and literal-IP checks but no DNS resolution;
+  and connections are not pinned against DNS rebinding.
+- **GAP-006 — Expired JSON polling:** an expired JSON Feed still sets a three-day
+  interval internally, but normal finalization clamps it to one day and leaves the
+  source live. The current regression test confirms the one-day result.
+- **GAP-007 — Configuration-name contradiction:** `AGENTS.md` still names
+  unprefixed `KEEP_OLD_ENCLOSURES`, `SAVE_JSON`, and `DRIPFEED_KEY`, while the
+  implementation and user documentation use `FEEDS_`-prefixed names.
+- **GAP-008 — Legacy presentation helpers:** application-specific `garden_style`,
+  `health_box`, and `recast_link` behavior remains in the model API. The two style
+  helpers have basic display tests, but the `Post` and `Enclosure` `recast_link`
+  properties have no direct coverage.
 
 These entries describe evidence and are not target-state requirements.
+
+### 10.1 Resolved historical findings
+
+- **GAP-003 — Subscription tree integrity (resolved):** `Subscription` model saves
+  now reject self-parenting, ancestor cycles, cross-user parents, and non-folder
+  parents. They also prevent a parent with children from becoming a feed or moving
+  to another user. Defensive traversal still terminates if legacy or external
+  database writes bypass model validation. Regression tests cover these behaviors,
+  including non-default database routing.
 
 ## 11. Assumptions requiring clarification
 
@@ -335,8 +348,9 @@ remain provisional and must not be treated as confirmed target-state decisions.
 
 ### A-002 — Automatic source disabling
 
-Provisional interpretation: 401, non-Cloudflare 403, 429, and other non-404 4xx
-responses intentionally set `live=False`.
+Provisional interpretation: 401, non-Cloudflare 403, and other non-404/non-410/
+non-429 4xx responses intentionally set `live=False`. A 429 response is explicitly
+retryable and does not disable the source.
 
 Evidence: `_read_feed_process_http_response` and HTTP regression tests.
 
@@ -380,13 +394,17 @@ names?
 
 ## 12. Evidence and validation record
 
-The backfill inspected:
+The 16 September 2026 revalidation inspected:
 
 - `AGENTS.md`, `README.md`, Sphinx documentation, package metadata, and changelog;
 - models, migrations, utilities, URL safety, admin, command, and worker support;
 - all test modules and feed fixtures;
-- recent repository history and open GitHub issue #43.
+- recent repository history and the implementation of each finding in section 10.
 
-At the time of backfill, the canonical rigorous check collected and passed 95
-tests. The specification does not claim behavior for untested host-application UI,
+The canonical rigorous check is `.venv/bin/pytest --reuse-db`. On 16 September
+2026 it collected 148 tests: 145 passed and three MySQL-only migration recovery
+tests were skipped under the local SQLite configuration. This dated count is a
+reproducible evidence snapshot rather than a permanent test-count requirement;
+ongoing CI results remain the source for later revisions. The specification does
+not claim behavior for the skipped MySQL paths or for untested host-application UI,
 authorization, deployment, scheduling, or production network topology.
