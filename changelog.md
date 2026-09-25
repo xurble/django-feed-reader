@@ -1,5 +1,8 @@
 
 ### 2.0.1
+- Security: Apply one secure-by-default SSRF policy to initial, alternate,
+  pagination, redirect, and test feed requests; private-network feeds require
+  the explicit `FEEDS_ALLOW_PRIVATE_NETWORKS=True` compatibility opt-out
 - Fix: HTTP 429 (rate limited) responses no longer permanently disable a source; polling now backs off and honors a valid `Retry-After` header (seconds or HTTP-date), bounded by the existing min/max poll interval
 - Security: Validate DNS results and every hop in bounded manual redirect chains before connecting
 - Fix: Bound first-import XML/Atom pagination, detect repeated page URLs, and stop cleanly on failed pagination responses

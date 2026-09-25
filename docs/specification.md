@@ -140,17 +140,21 @@ Evidence: model fields, constraints, save behavior, and signals in
   replace the stored feed URL.
 - **REDIR-003** — Relative Location values shall be resolved against the current
   response URL.
-- **SEC-001** — Redirect targets shall be absolute HTTP(S) URLs with a host. Literal
+- **SEC-001** — Every initial, alternate, pagination, and redirect feed target
+  shall pass one request-safety policy immediately before use. Targets shall be
+  absolute HTTP(S) URLs with a host. By default, literal
   private, loopback, link-local, reserved, multicast, and metadata IP addresses,
   plus `localhost`, `.localhost`, `.local`, and the configured metadata hostname,
   shall be rejected. Hostnames shall resolve successfully, and every returned
-  address shall be globally routable before a redirect request is made.
-- **SEC-002** — Initial source URLs and pagination links are not DNS-resolved before
-  requests. Redirect DNS validation is a pre-request check and does not pin the
-  connection address, so DNS rebinding remains outside the observed protection.
-  This boundary is subject to assumption A-004.
+  address shall be globally routable before a request is made.
+- **SEC-002** — `FEEDS_ALLOW_PRIVATE_NETWORKS=True` shall permit trusted private
+  feed targets while retaining HTTP(S) URL and authority validation.
+- **SEC-003** — URL validation is a pre-request check and does not pin the address
+  used by Requests. Applications accepting untrusted URLs shall use an outbound
+  firewall or trusted proxy as a compensating control against DNS rebinding and
+  proxy-side resolution differences.
 
-Evidence: `feeds/utils.py`; `feeds/url_safety.py`;
+Evidence: `feeds/utils.py`; `feeds/utils_internal.py`; `feeds/url_safety.py`;
 `feeds/tests/test_http.py`; `feeds/tests/test_url_safety.py`.
 
 ## 5. Feed parsing and persistence
@@ -282,6 +286,8 @@ Evidence: `feeds/utils.py`; `feeds/tests/test_http.py`;
 - **CFG-007** — `FEEDS_MAX_PAGINATION_PAGES` and
   `FEEDS_MAX_PAGINATION_ENTRIES` shall default to 20 and 2,000 respectively.
   Invalid or non-positive values shall use those defaults.
+- **CFG-008** — `FEEDS_ALLOW_PRIVATE_NETWORKS` shall default to `False`. Setting
+  it to `True` explicitly opts trusted installations into private-network feeds.
 
 Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
 `feeds/utils_internal.py`; `feeds/management/commands/refreshfeeds.py`;
@@ -310,15 +316,11 @@ Evidence: `AGENTS.md`; `setup.py`; `feeds/models.py`;
 ## 10. Suspected defects, contradictions, and coverage gaps
 
 The following open findings were revalidated against the implementation and tests
-on 16 September 2026:
+on 25 September 2026:
 
 - **GAP-004 — Ignored pagination direction:**
   `Subscription.get_paginated_posts(oldest_first=...)` still always orders newest
   first, and subscription pagination tests do not exercise the direction argument.
-- **GAP-005 — Partial SSRF boundary:** redirect targets and their DNS results are
-  checked before each hop. Initial source URLs are not validated before requests;
-  pagination links receive structural and literal-IP checks but no DNS resolution;
-  and connections are not pinned against DNS rebinding.
 - **GAP-006 — Expired JSON polling:** an expired JSON Feed still sets a three-day
   interval internally, but normal finalization clamps it to one day and leaves the
   source live. The current regression test confirms the one-day result.
@@ -360,22 +362,6 @@ Impact if wrong: whether transient authentication, permission, and rate-limit
 failures permanently stop polling.
 
 Question: Which 4xx responses should disable a source rather than remain retryable?
-
-### A-004 — URL safety boundary
-
-Provisional interpretation: comprehensive SSRF protection is desirable for every
-URL fetched by the library, not only explicit redirects.
-
-Evidence: redirect hardening and tests; direct source and paginated requests bypass
-DNS validation, and redirect connections are not address-pinned.
-
-Confidence: medium.
-
-Impact if wrong: host-network exposure and compatibility with feeds hosted on
-private networks.
-
-Question: Should initial URLs, pagination links, and resolved hostname addresses be
-subject to the same safety policy?
 
 ### A-005 — Canonical setting names
 

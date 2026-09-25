@@ -1,4 +1,5 @@
 import os
+import socket
 from importlib import reload
 from unittest.mock import patch
 
@@ -230,7 +231,32 @@ class XMLFeedsTest(BaseTest):
 
         self.assertEqual(src.posts.count(), 1)
         self.assertEqual(len(mock.request_history), 1)
-        self.assertEqual(src.last_result, "Pagination stopped at unsafe URL")
+        self.assertEqual(
+            src.last_result, "Pagination stopped: Unsafe or invalid feed URL"
+        )
+
+    def test_atom_does_not_request_pagination_url_with_private_dns_answer(self, mock):
+        second_url = "http://history.example/page-2.xml"
+        mock.register_uri(
+            "GET",
+            BASE_URL,
+            status_code=200,
+            content=_atom_feed(["first"], next_url=second_url),
+            headers={"Content-Type": "application/atom+xml"},
+        )
+        self.mock_getaddrinfo.side_effect = [
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))],
+        ]
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(src.posts.count(), 1)
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.last_result, "Pagination stopped: Unsafe feed address")
 
     def test_item_without_enclosures_list(self, mock):
         """Entries without an enclosures key must not raise KeyError."""

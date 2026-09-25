@@ -56,7 +56,7 @@ This is a published PyPI package with downstream users. Do not make breaking cha
 - Function signatures in `feeds/utils.py` (`read_feed`, `update_feeds`, `test_feed`, `get_subscription_list_for_user`, `get_unread_subscription_list_for_user`)
 - Model fields and related names on `Source`, `Post`, `Enclosure`, `Subscription`
 - The `refreshfeeds` management command
-- Settings names (`FEEDS_USER_AGENT`, `FEEDS_SERVER`, `FEEDS_VERIFY_HTTPS`, `KEEP_OLD_ENCLOSURES`, `SAVE_JSON`, `DRIPFEED_KEY`)
+- Settings names (`FEEDS_USER_AGENT`, `FEEDS_SERVER`, `FEEDS_VERIFY_HTTPS`, `FEEDS_ALLOW_PRIVATE_NETWORKS`, `KEEP_OLD_ENCLOSURES`, `SAVE_JSON`, `DRIPFEED_KEY`)
 
 Adding new optional parameters, fields, or functions is fine. Changing return types, removing parameters, renaming fields, or altering existing behavior is not.
 

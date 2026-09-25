@@ -9,6 +9,7 @@ server = derive_default_feeds_server(settings.ALLOWED_HOSTS)
 _DEFAULTS = {
     "FEEDS_USER_AGENT": "django-feed-reader",
     "FEEDS_SERVER": server,
+    "FEEDS_ALLOW_PRIVATE_NETWORKS": False,
 }
 
 for key, value in _DEFAULTS.items():

@@ -1,15 +1,18 @@
-"""Validate HTTP(S) redirect targets to reduce SSRF risk when following Location headers."""
+"""Validate outbound feed URLs to reduce SSRF risk."""
 
 import ipaddress
 import socket
 from typing import Tuple
 from urllib.parse import urljoin, urlparse
 
+from django.conf import settings
+
 __all__ = [
-    "resolve_feed_redirect_location",
-    "is_safe_http_redirect_target",
-    "validate_http_redirect_target",
     "derive_default_feeds_server",
+    "is_safe_http_redirect_target",
+    "resolve_feed_redirect_location",
+    "validate_feed_request_target",
+    "validate_http_redirect_target",
 ]
 
 _BLOCKED_HOSTNAMES = frozenset(
@@ -54,33 +57,37 @@ def _is_safe_ip_address(address: str) -> bool:
     return ip.is_global
 
 
-def validate_http_redirect_target(
-    url: str, resolve_hostname: bool = False
+def _validate_http_target(
+    url: str, *, resolve_hostname: bool, allow_private_networks: bool
 ) -> Tuple[bool, str]:
-    """Validate a redirect URL and optionally all addresses returned by DNS."""
-    invalid_result = (False, "Unsafe or invalid redirect URL")
+    """Validate URL structure and, in strict mode, every resolved address."""
     if not url or not isinstance(url, str):
-        return invalid_result
+        return (False, "invalid")
     # Requests and urllib.parse disagree about backslashes in URL authorities.
     # Reject them before parsing so validation and connection cannot target
     # different hosts (for example, ``127.0.0.1\\@example.com``).
     if "\\" in url:
-        return invalid_result
+        return (False, "invalid")
     try:
         parsed = urlparse(url)
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
     except (TypeError, ValueError):
-        return invalid_result
+        return (False, "invalid")
     scheme = (parsed.scheme or "").lower()
     if scheme not in ("http", "https"):
-        return invalid_result
+        return (False, "invalid")
     host = parsed.hostname
     if not host:
-        return invalid_result
+        return (False, "invalid")
+
+    if allow_private_networks:
+        return (True, "")
+
     host_lower = host.lower().rstrip(".")
     if host_lower in _BLOCKED_HOSTNAMES:
-        return invalid_result
-    if host_lower.endswith(".local") or host_lower.endswith(".localhost"):
-        return invalid_result
+        return (False, "invalid")
+    if host_lower.endswith((".local", ".localhost")):
+        return (False, "invalid")
 
     try:
         ipaddress.ip_address(host_lower)
@@ -88,10 +95,9 @@ def validate_http_redirect_target(
         if not resolve_hostname:
             return (True, "")
     else:
-        return (True, "") if _is_safe_ip_address(host_lower) else invalid_result
+        return (True, "") if _is_safe_ip_address(host_lower) else (False, "invalid")
 
     try:
-        port = parsed.port or (443 if scheme == "https" else 80)
         addresses = socket.getaddrinfo(
             host_lower,
             port,
@@ -99,19 +105,54 @@ def validate_http_redirect_target(
             type=socket.SOCK_STREAM,
         )
     except (OSError, ValueError):
-        return (False, "Redirect hostname resolution failed")
+        return (False, "resolution_failed")
 
     if not addresses:
-        return (False, "Redirect hostname resolution failed")
+        return (False, "resolution_failed")
     for address_info in addresses:
         try:
             address = address_info[4][0]
         except (IndexError, TypeError):
-            return (False, "Redirect hostname resolution failed")
+            return (False, "resolution_failed")
         if not _is_safe_ip_address(address):
-            return (False, "Unsafe redirect address")
+            return (False, "unsafe_address")
 
     return (True, "")
+
+
+def validate_http_redirect_target(
+    url: str, resolve_hostname: bool = False
+) -> Tuple[bool, str]:
+    """Validate a redirect URL and optionally all addresses returned by DNS."""
+    safe, reason = _validate_http_target(
+        url,
+        resolve_hostname=resolve_hostname,
+        allow_private_networks=False,
+    )
+    failure_reasons = {
+        "invalid": "Unsafe or invalid redirect URL",
+        "resolution_failed": "Redirect hostname resolution failed",
+        "unsafe_address": "Unsafe redirect address",
+    }
+    return (safe, failure_reasons.get(reason, ""))
+
+
+def validate_feed_request_target(url: str) -> Tuple[bool, str]:
+    """Apply the configured safety policy to any URL immediately before fetching."""
+    allow_private_networks = bool(
+        getattr(settings, "FEEDS_ALLOW_PRIVATE_NETWORKS", False)
+    )
+    safe, reason = _validate_http_target(
+        url,
+        resolve_hostname=not allow_private_networks,
+        allow_private_networks=allow_private_networks,
+    )
+    failure_reasons = {
+        "invalid": "Unsafe or invalid feed URL",
+        "resolution_failed": "Feed hostname resolution failed",
+        "unsafe_address": "Unsafe feed address",
+    }
+    return (safe, failure_reasons.get(reason, ""))
 
 
 def is_safe_http_redirect_target(url: str, resolve_hostname: bool = False) -> bool:

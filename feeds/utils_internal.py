@@ -15,8 +15,8 @@ from django.utils import timezone
 
 from feeds.models import Enclosure, Post, Source
 from feeds.url_safety import (
-    is_safe_http_redirect_target,
     resolve_feed_redirect_location,
+    validate_feed_request_target,
 )
 
 DEFAULT_MAX_PAGINATION_PAGES = 20
@@ -595,8 +595,11 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
             next_url = _next_feed_page(f, current_url)
             if next_url is None:
                 break
-            if not is_safe_http_redirect_target(next_url):
-                source_feed._pagination_result = "Pagination stopped at unsafe URL"
+            safe, failure_reason = validate_feed_request_target(next_url)
+            if not safe:
+                source_feed._pagination_result = (
+                    "Pagination stopped: " + failure_reason
+                )[:255]
                 break
             if next_url in visited_urls:
                 source_feed._pagination_result = "Pagination stopped at repeated URL"
