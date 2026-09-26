@@ -12,7 +12,7 @@ from dripfeed import DripFeed, DripFeedException
 from feeds.models import Source, Subscription
 from feeds.url_safety import (
     resolve_feed_redirect_location,
-    validate_http_redirect_target,
+    validate_feed_request_target,
 )
 from feeds.utils_internal import (
     VERIFY_HTTPS,
@@ -69,6 +69,12 @@ def _read_feed_resolve_url(source_feed: Source) -> str:
 def _read_feed_initial_get(
     source_feed: Source, feed_url: str, headers: dict, output: TextIO
 ) -> Optional[requests.Response]:
+    safe, failure_reason = validate_feed_request_target(feed_url)
+    if not safe:
+        source_feed.last_result = failure_reason
+        source_feed.status_code = 0
+        output.write("\n" + failure_reason)
+        return None
     try:
         ret = requests.get(
             feed_url,
@@ -96,9 +102,7 @@ def _read_feed_apply_permanent_redirect(
         return
     raw_location = ret.headers["Location"]
     resolved = resolve_feed_redirect_location(raw_location, source_feed.feed_url)
-    safe, failure_reason = validate_http_redirect_target(
-        resolved, resolve_hostname=True
-    )
+    safe, failure_reason = validate_feed_request_target(resolved)
     if not safe:
         source_feed.last_result = failure_reason
         return
@@ -126,9 +130,7 @@ def _read_feed_follow_temporary_redirect(
 
             raw_location = ret.headers["Location"]
             resolved = resolve_feed_redirect_location(raw_location, current_url)
-            safe, failure_reason = validate_http_redirect_target(
-                resolved, resolve_hostname=True
-            )
+            safe, failure_reason = validate_feed_request_target(resolved)
             if not safe:
                 source_feed.last_result = failure_reason
                 source_feed.interval += 60
@@ -439,6 +441,11 @@ def test_feed(
         headers["Pragma"] = "no-cache"
 
     output.write(str(headers))
+
+    safe, failure_reason = validate_feed_request_target(source_feed.feed_url)
+    if not safe:
+        output.write(f"\nError: {failure_reason}")
+        return False
 
     try:
         ret = requests.get(

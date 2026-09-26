@@ -3,12 +3,13 @@
 import socket
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from feeds.url_safety import (
     derive_default_feeds_server,
     is_safe_http_redirect_target,
     resolve_feed_redirect_location,
+    validate_feed_request_target,
     validate_http_redirect_target,
 )
 
@@ -114,3 +115,41 @@ class IsSafeHttpRedirectTargetTests(SimpleTestCase):
 
         self.assertFalse(safe)
         self.assertEqual(reason, "Redirect hostname resolution failed")
+
+
+class ValidateFeedRequestTargetTests(SimpleTestCase):
+    def test_rejects_link_local_ipv6(self):
+        safe, reason = validate_feed_request_target("http://[fe80::1]/feed")
+
+        self.assertFalse(safe)
+        self.assertEqual(reason, "Unsafe or invalid feed URL")
+
+    def test_rejects_malformed_port(self):
+        safe, reason = validate_feed_request_target("http://example.com:not-a-port/")
+
+        self.assertFalse(safe)
+        self.assertEqual(reason, "Unsafe or invalid feed URL")
+
+    @patch("feeds.url_safety.socket.getaddrinfo")
+    def test_rejects_hostname_with_mixed_public_and_private_answers(
+        self, mock_getaddrinfo
+    ):
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.16.0.2", 80)),
+        ]
+
+        safe, reason = validate_feed_request_target("http://mixed.example/feed")
+
+        self.assertFalse(safe)
+        self.assertEqual(reason, "Unsafe feed address")
+
+    @override_settings(FEEDS_ALLOW_PRIVATE_NETWORKS=True)
+    def test_private_network_opt_out_keeps_structural_validation(self):
+        self.assertEqual(
+            validate_feed_request_target("http://localhost/feed"), (True, "")
+        )
+        self.assertEqual(
+            validate_feed_request_target("file:///etc/passwd"),
+            (False, "Unsafe or invalid feed URL"),
+        )

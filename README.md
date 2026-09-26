@@ -253,6 +253,12 @@ If `FEEDS_SERVER` is not set, the library will derive a default from `ALLOWED_HO
 - `FEEDS_VERIFY_HTTPS` (default: `True`)
   - Set to `False` only if you deliberately want to allow invalid HTTPS certificates.
 
+- `FEEDS_ALLOW_PRIVATE_NETWORKS` (default: `False`)
+  - By default, every initial, alternate, pagination, and redirect feed URL must
+    resolve exclusively to globally routable addresses before it is requested.
+  - Set to `True` only when trusted feeds on loopback, private, link-local, or
+    otherwise non-public networks are an intentional requirement.
+
 - `FEEDS_KEEP_OLD_ENCLOSURES` (default: `False`)
   - If a feed changes enclosure URLs over time, keep the old ones and mark them with `is_current=False`.
 
@@ -288,6 +294,22 @@ When a feed responds in a way that looks like Cloudflare protection, the library
 - It does not define URLs or views for your application
 - It does not download enclosure files for you
 - It does not provide a complete end-user feed reader product
+
+## Outbound request safety
+
+All feed fetch paths use one URL-safety policy. Automatic redirects are disabled;
+each redirect hop is resolved and checked before it is followed. In the default
+configuration, malformed authorities, non-HTTP(S) schemes, local hostnames,
+non-global literal addresses, DNS failures, and hostnames with any non-global DNS
+answer are rejected.
+
+DNS validation happens immediately before each request, but Requests performs its
+own connection lookup. The library therefore cannot fully eliminate a DNS
+rebinding race without replacing Requests' connection handling, which would risk
+breaking TLS/SNI and proxy support. Applications accepting untrusted feed URLs
+should also enforce outbound firewall or proxy rules; those controls are the final
+authority on the address actually reached. Treat configured proxies and
+Cloudflare/Dripfeed endpoints as trusted infrastructure.
 
 ## Development
 

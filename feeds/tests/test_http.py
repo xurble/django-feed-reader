@@ -1,11 +1,11 @@
 import socket
 from datetime import timedelta
 from importlib import reload
-from unittest.mock import patch
 
 import requests
 import requests_mock
 from django.conf import settings
+from django.test import override_settings
 from django.utils import timezone
 
 from feeds import utils
@@ -17,14 +17,65 @@ from .base import BASE_URL, BaseTest, NullOutput
 
 @requests_mock.Mocker()
 class HTTPStuffTest(BaseTest):
-    def setUp(self):
-        super().setUp()
-        dns_patcher = patch("feeds.url_safety.socket.getaddrinfo")
-        self.mock_getaddrinfo = dns_patcher.start()
-        self.addCleanup(dns_patcher.stop)
+    def test_initial_request_rejects_loopback_url(self, mock):
+        src = Source(name="test1", feed_url="http://127.0.0.1/feed", interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 0)
+        self.assertEqual(src.status_code, 0)
+        self.assertEqual(src.last_result, "Unsafe or invalid feed URL")
+
+    def test_initial_request_rejects_mixed_dns_answers(self, mock):
         self.mock_getaddrinfo.return_value = [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 80)),
         ]
+        src = Source(name="test1", feed_url=BASE_URL, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 0)
+        self.assertEqual(src.last_result, "Unsafe feed address")
+
+    def test_alternate_request_rejects_private_url(self, mock):
+        src = Source(
+            name="test1",
+            feed_url=BASE_URL,
+            alt_url="http://192.168.1.2/feed",
+            is_cloudflare=True,
+            interval=0,
+        )
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 0)
+        self.assertEqual(src.last_result, "Unsafe or invalid feed URL")
+
+    @override_settings(FEEDS_ALLOW_PRIVATE_NETWORKS=True)
+    def test_private_network_opt_out_allows_initial_request(self, mock):
+        private_url = "http://127.0.0.1/feed"
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="rss_xhtml_body.xml",
+            content_type="application/xml+rss",
+            url=private_url,
+        )
+        src = Source(name="test1", feed_url=private_url, interval=0)
+        src.save()
+
+        read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+
+        self.assertEqual(len(mock.request_history), 1)
+        self.assertEqual(src.status_code, 200)
 
     def test_etags(self, mock):
 
@@ -463,7 +514,7 @@ class HTTPStuffTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
-        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.last_result, "Unsafe or invalid feed URL")
         self.assertEqual(src.posts.count(), 0)
         self.assertEqual(src.feed_url, BASE_URL)
 
@@ -492,7 +543,7 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(len(mock.request_history), 2)
-        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.last_result, "Unsafe or invalid feed URL")
         self.assertEqual(src.posts.count(), 0)
 
     def test_temp_redirect_rejects_backslash_authority_ambiguity(self, mock):
@@ -511,12 +562,13 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(len(mock.request_history), 1)
-        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.last_result, "Unsafe or invalid feed URL")
 
     def test_temp_redirect_rejects_hostname_resolving_private(self, mock):
         safe_looking_url = "http://internal.example/feed"
-        self.mock_getaddrinfo.return_value = [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 80))
+        self.mock_getaddrinfo.side_effect = [
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 80))],
         ]
         self._populate_mock(
             mock,
@@ -532,11 +584,14 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(len(mock.request_history), 1)
-        self.assertEqual(src.last_result, "Unsafe redirect address")
+        self.assertEqual(src.last_result, "Unsafe feed address")
 
     def test_temp_redirect_dns_failure_stops_before_request(self, mock):
         safe_looking_url = "http://missing.example/feed"
-        self.mock_getaddrinfo.side_effect = socket.gaierror
+        self.mock_getaddrinfo.side_effect = [
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+            socket.gaierror,
+        ]
         self._populate_mock(
             mock,
             status=302,
@@ -551,7 +606,7 @@ class HTTPStuffTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(len(mock.request_history), 1)
-        self.assertEqual(src.last_result, "Redirect hostname resolution failed")
+        self.assertEqual(src.last_result, "Feed hostname resolution failed")
 
     def test_perm_redirect_rejects_unsafe_location(self, mock):
 
@@ -570,13 +625,14 @@ class HTTPStuffTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
-        self.assertEqual(src.last_result, "Unsafe or invalid redirect URL")
+        self.assertEqual(src.last_result, "Unsafe or invalid feed URL")
         self.assertEqual(src.feed_url, BASE_URL)
 
     def test_perm_redirect_rejects_hostname_resolving_private(self, mock):
         safe_looking_url = "http://internal.example/feed"
-        self.mock_getaddrinfo.return_value = [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.2", 80))
+        self.mock_getaddrinfo.side_effect = [
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.2", 80))],
         ]
         self._populate_mock(
             mock,
@@ -591,7 +647,7 @@ class HTTPStuffTest(BaseTest):
         read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
-        self.assertEqual(src.last_result, "Unsafe redirect address")
+        self.assertEqual(src.last_result, "Unsafe feed address")
         self.assertEqual(src.feed_url, BASE_URL)
 
     def test_empty_response_body(self, mock):

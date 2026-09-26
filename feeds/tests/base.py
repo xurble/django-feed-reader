@@ -1,4 +1,6 @@
 import os
+import socket
+from unittest.mock import patch
 
 from django.test import TransactionTestCase
 
@@ -14,6 +16,15 @@ class NullOutput(object):
 
 
 class BaseTest(TransactionTestCase):
+    def setUp(self):
+        super().setUp()
+        dns_patcher = patch("feeds.url_safety.socket.getaddrinfo")
+        self.mock_getaddrinfo = dns_patcher.start()
+        self.addCleanup(dns_patcher.stop)
+        self.mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))
+        ]
+
     def _populate_mock(
         self,
         mock,

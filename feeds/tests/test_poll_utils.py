@@ -1,5 +1,6 @@
 """Tests for update_feeds and test_feed."""
 
+import socket
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,15 @@ class UpdateFeedsTests(TransactionTestCase):
 
 
 class TestFeedTests(TransactionTestCase):
+    def setUp(self):
+        super().setUp()
+        dns_patcher = patch("feeds.url_safety.socket.getaddrinfo")
+        self.mock_getaddrinfo = dns_patcher.start()
+        self.addCleanup(dns_patcher.stop)
+        self.mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))
+        ]
+
     @patch("feeds.utils.requests.get")
     def test_test_feed_returns_true_on_ok_response(self, mock_get):
         response = MagicMock()
@@ -49,3 +59,11 @@ class TestFeedTests(TransactionTestCase):
         src.save()
 
         self.assertFalse(feeds_utils.test_feed(src, output=StringIO()))
+
+    @patch("feeds.utils.requests.get")
+    def test_test_feed_rejects_private_url_before_request(self, mock_get):
+        src = Source(name="t", feed_url="http://10.0.0.1/feed.xml", interval=0)
+        src.save()
+
+        self.assertFalse(feeds_utils.test_feed(src, output=StringIO()))
+        mock_get.assert_not_called()
