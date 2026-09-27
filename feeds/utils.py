@@ -5,7 +5,7 @@ from typing import List, Optional, TextIO, Tuple
 
 import requests
 from django.conf import settings
-from django.db import transaction
+from django.db import router, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from dripfeed import DripFeed, DripFeedException
@@ -347,6 +347,7 @@ def _read_feed_finalize_interval_and_save(
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
     source_feed.save(
+        using=source_feed._state.db,
         update_fields=[
             "due_poll",
             "interval",
@@ -363,8 +364,7 @@ def _read_feed_finalize_interval_and_save(
             "is_cloudflare",
             "last_change",
             "alt_url",
-            "feed_url",
-        ]
+        ],
     )
 
 
@@ -378,6 +378,8 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
     :type output: TextIO
     """
     old_interval = source_feed.interval
+    original_feed_url = source_feed.feed_url
+    database = router.db_for_write(Source, instance=source_feed)
 
     source_feed.last_polled = timezone.now()
 
@@ -410,12 +412,16 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
             normalized_feed=normalized_feed,
         )
 
-    with transaction.atomic():
+    with transaction.atomic(using=database):
+        source_feed._state.db = database
         source_feed.max_index = (
-            Source.objects.select_for_update()
+            Source.objects.using(database)
+            .select_for_update()
             .values_list("max_index", flat=True)
             .get(pk=source_feed.pk)
         )
+        if source_feed.feed_url != original_feed_url:
+            source_feed.save(using=database, update_fields=["feed_url"])
         if ret and ret.status_code >= 200 and ret.status_code < 300:
             _read_feed_process_success_body(
                 source_feed,

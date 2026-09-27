@@ -11,6 +11,7 @@ import feedparser as parser
 import pyrfc3339
 import requests
 from django.conf import settings
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from feeds.models import Enclosure, Post, Source
@@ -143,7 +144,7 @@ def fetch_feed_pagination(
     pages = []
     pagination_result = None
 
-    if source_feed.posts.exists():
+    if source_feed.posts.using(source_feed._state.db).exists():
         return pages, pagination_result
     if not isinstance(feed_body, (bytes, bytearray)) or not feed_body:
         return pages, pagination_result
@@ -236,20 +237,28 @@ def fetch_feed_pagination(
 def _posts_by_guid_lookup(source_feed: Source) -> dict:
     """Load posts for this source keyed by guid (one query + enclosure prefetch)."""
     posts_by_guid = {}
-    for p in Post.objects.filter(source=source_feed).prefetch_related("enclosures"):
+    for p in (
+        Post.objects.using(source_feed._state.db)
+        .filter(source=source_feed)
+        .prefetch_related(
+            Prefetch("enclosures", queryset=Enclosure.objects.using(source_feed._state.db))
+        )
+    ):
         if p.guid is not None:
             posts_by_guid[p.guid] = p
     return posts_by_guid
 
 
-def _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields):
+def _commit_enclosure_batch(
+    delete_ids, to_update, to_create, update_fields, using=None
+):
     """Apply enclosure deletes, updates, and creates with minimal round-trips."""
     if delete_ids:
-        Enclosure.objects.filter(pk__in=delete_ids).delete()
+        Enclosure.objects.using(using).filter(pk__in=delete_ids).delete()
     if to_update:
-        Enclosure.objects.bulk_update(to_update, update_fields)
+        Enclosure.objects.using(using).bulk_update(to_update, update_fields)
     if to_create:
-        Enclosure.objects.bulk_create(to_create)
+        Enclosure.objects.using(using).bulk_create(to_create)
 
 
 def _xml_entry_enclosure_dicts(e) -> list:
@@ -330,7 +339,10 @@ def _batch_sync_enclosures_normalized(
     delete_ids = []
     to_create = []
 
-    for ee in list(p.enclosures.all()):
+    enclosures = getattr(p, "_prefetched_objects_cache", {}).get("enclosures")
+    if enclosures is None:
+        enclosures = p.enclosures.using(p._state.db).all()
+    for ee in list(enclosures):
         found_enclosure = False
         for pe in items:
             if pe["href"] == ee.href and ee.href not in seen_files:
@@ -372,7 +384,9 @@ def _batch_sync_enclosures_normalized(
         except (KeyError, TypeError, ValueError):
             pass
 
-    _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields)
+    _commit_enclosure_batch(
+        delete_ids, to_update, to_create, update_fields, using=p._state.db
+    )
 
 
 def _batch_sync_enclosures_xml(p: Post, e):
@@ -538,13 +552,15 @@ def parse_feed(
 
         # Assign indices in one round-trip (avoid per-post save + signal overhead).
         posts = list(
-            Post.objects.filter(source=source_feed, index=0).order_by("created")
+            Post.objects.using(source_feed._state.db)
+            .filter(source=source_feed, index=0)
+            .order_by("created")
         )
         if posts:
             start = source_feed.max_index
             for i, p in enumerate(posts, start=1):
                 p.index = start + i
-            Post.objects.bulk_update(posts, ["index"])
+            Post.objects.using(source_feed._state.db).bulk_update(posts, ["index"])
             source_feed.max_index = start + len(posts)
 
     return (ok, changed)
@@ -561,7 +577,7 @@ def parse_feed_xml(
     ok = True
     changed = False
 
-    is_first = not source_feed.posts.exists()
+    is_first = not source_feed.posts.using(source_feed._state.db).exists()
     if is_first and max_entries is None:
         max_entries = _positive_int_setting(
             "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
@@ -590,25 +606,27 @@ def parse_feed_xml(
         entries = []
         ok = False
 
-    source_feed.save(update_fields=["last_success", "last_result"])
+    source_feed.save(
+        using=source_feed._state.db, update_fields=["last_success", "last_result"]
+    )
 
     if ok:
         try:
             source_feed.name = f.feed.title
-            source_feed.save(update_fields=["name"])
+            source_feed.save(using=source_feed._state.db, update_fields=["name"])
         except Exception as ex:
             logger.warning("Update name error:" + str(ex))
             pass
 
         try:
             source_feed.site_url = f.feed.link
-            source_feed.save(update_fields=["site_url"])
+            source_feed.save(using=source_feed._state.db, update_fields=["site_url"])
         except Exception:
             pass
 
         try:
             source_feed.image_url = f.feed.image.href
-            source_feed.save(update_fields=["image_url"])
+            source_feed.save(using=source_feed._state.db, update_fields=["image_url"])
         except Exception:
             pass
 
@@ -625,7 +643,7 @@ def parse_feed_xml(
             pass
 
         try:
-            source_feed.save(update_fields=["description"])
+            source_feed.save(using=source_feed._state.db, update_fields=["description"])
         except Exception:
             pass
 
@@ -718,7 +736,7 @@ def parse_feed_xml(
                 output.write(str(ex))
                 output.write(p.body)
 
-            p.save()
+            p.save(using=source_feed._state.db)
             posts_by_guid[guid] = p
 
             try:
@@ -730,7 +748,7 @@ def parse_feed_xml(
             # Kill the entries
             f["entries"] = None
             source_feed.json = f
-            source_feed.save(update_fields=["json"])
+            source_feed.save(using=source_feed._state.db, update_fields=["json"])
 
     return (ok, changed)
 
@@ -752,7 +770,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
             source_feed.interval += 120
             ok = False
 
-        source_feed.save(update_fields=["last_success", "last_result"])
+        source_feed.save(
+            using=source_feed._state.db, update_fields=["last_success", "last_result"]
+        )
 
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         source_feed.last_result = "Feed Parse Error"
@@ -773,7 +793,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
             source_feed.site_url = f["home_page_url"]
             source_feed.name = f["title"]
 
-            source_feed.save(update_fields=["site_url", "name"])
+            source_feed.save(
+                using=source_feed._state.db, update_fields=["site_url", "name"]
+            )
 
         except Exception:
             pass
@@ -784,7 +806,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
                 source_feed.description = parser.sanitizer._sanitize_html(
                     f["description"], "utf-8", "text/html"
                 )
-                source_feed.save(update_fields=["description"])
+                source_feed.save(
+                    using=source_feed._state.db, update_fields=["description"]
+                )
         except Exception:
             pass
 
@@ -793,7 +817,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
             source_feed.name = parser.sanitizer._sanitize_html(
                 source_feed.name, "utf-8", "text/html"
             )
-            source_feed.save(update_fields=["name"])
+            source_feed.save(using=source_feed._state.db, update_fields=["name"])
 
         except Exception:
             pass
@@ -801,7 +825,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
         try:
             if "icon" in f:
                 source_feed.image_url = f["icon"]
-                source_feed.save(update_fields=["image_url"])
+                source_feed.save(
+                    using=source_feed._state.db, update_fields=["image_url"]
+                )
         except Exception:
             pass
 
@@ -882,7 +908,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
                 output.write(str(ex))
                 output.write(p.body)
 
-            p.save()
+            p.save(using=source_feed._state.db)
             posts_by_guid[guid] = p
 
             try:
@@ -893,6 +919,6 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
         if SAVE_JSON:
             f["items"] = []
             source_feed.json = f
-            source_feed.save(update_fields=["json"])
+            source_feed.save(using=source_feed._state.db, update_fields=["json"])
 
     return (ok, changed)
