@@ -107,6 +107,132 @@ def _next_feed_page(feed, current_url: str):
     return None
 
 
+def normalize_feed_response(feed_body, content_type):
+    """Parse a successful response into its in-memory feed representation."""
+    if not isinstance(feed_body, (bytes, bytearray)) or not feed_body:
+        return None
+
+    feed_body = bytes(feed_body)
+    if "xml" in content_type or feed_body[0:1] == b"<":
+        try:
+            _customize_sanitizer(parser)
+            return parser.parse(feed_body)
+        except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
+            return None
+
+    try:
+        feed_text = feed_body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "json" in content_type or feed_body[0:1] == b"{":
+        try:
+            return json.loads(feed_text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+    return None
+
+
+def fetch_feed_pagination(
+    source_feed,
+    feed_body,
+    content_type,
+    output: TextIO,
+    normalized_feed=None,
+):
+    """Fetch and validate initial-import pagination before persistence starts."""
+    pages = []
+    pagination_result = None
+
+    if source_feed.posts.exists():
+        return pages, pagination_result
+    if not isinstance(feed_body, (bytes, bytearray)) or not feed_body:
+        return pages, pagination_result
+    if "xml" not in content_type and bytes(feed_body)[0:1] != b"<":
+        return pages, pagination_result
+
+    try:
+        feed = normalized_feed or parser.parse(bytes(feed_body))
+        entries = feed["entries"]
+    except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
+        return pages, pagination_result
+    if not entries:
+        return pages, pagination_result
+
+    max_pages = _positive_int_setting(
+        "FEEDS_MAX_PAGINATION_PAGES", DEFAULT_MAX_PAGINATION_PAGES
+    )
+    max_total_entries = _positive_int_setting(
+        "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
+    )
+    entries_processed = min(len(entries), max_total_entries)
+    pages_fetched = 0
+    current_url = source_feed.feed_url
+    visited_urls = {current_url}
+
+    if len(entries) > max_total_entries:
+        pagination_result = _pagination_limit("entries", max_total_entries)
+
+    while pagination_result is None:
+        next_url = _next_feed_page(feed, current_url)
+        if next_url is None:
+            break
+        safe, failure_reason = validate_feed_request_target(next_url)
+        if not safe:
+            pagination_result = ("Pagination stopped: " + failure_reason)[:255]
+            break
+        if next_url in visited_urls:
+            pagination_result = "Pagination stopped at repeated URL"
+            break
+        if pages_fetched >= max_pages:
+            pagination_result = _pagination_limit("pages", max_pages)
+            break
+        if entries_processed >= max_total_entries:
+            pagination_result = _pagination_limit("entries", max_total_entries)
+            break
+
+        try:
+            ret = requests.get(
+                next_url,
+                headers={"User-Agent": get_agent(source_feed)},
+                verify=VERIFY_HTTPS,
+                allow_redirects=False,
+                timeout=20,
+            )
+        except (requests.RequestException, OSError) as ex:
+            pagination_result = ("Pagination request failed: " + str(ex))[:255]
+            break
+
+        if ret.status_code < 200 or ret.status_code >= 300:
+            pagination_result = f"Pagination request failed: HTTP {ret.status_code}"
+            break
+        if not ret.content:
+            pagination_result = "Pagination stopped at empty response"
+            break
+
+        remaining_entries = max_total_entries - entries_processed
+        try:
+            page_feed = parser.parse(ret.content)
+            page_entries = page_feed.get("entries", [])
+        except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
+            page_entries = []
+        if not page_entries:
+            pagination_result = "Pagination stopped at invalid feed"
+            break
+
+        pages.append((page_feed, remaining_entries))
+        pages_fetched += 1
+        entries_processed += min(len(page_entries), remaining_entries)
+        visited_urls.add(next_url)
+        current_url = ret.url or next_url
+        visited_urls.add(current_url)
+        feed = page_feed
+
+        if len(page_entries) > remaining_entries:
+            pagination_result = _pagination_limit("entries", max_total_entries)
+
+    return pages, pagination_result
+
+
 def _posts_by_guid_lookup(source_feed: Source) -> dict:
     """Load posts for this source keyed by guid (one query + enclosure prefetch)."""
     posts_by_guid = {}
@@ -338,7 +464,14 @@ def is_valid_post_guid(x):
     return (x is not None) and (len(x) <= Post.GUID_MAX_LENGTH)
 
 
-def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
+def parse_feed(
+    source_feed: Source,
+    feed_body,
+    content_type,
+    output: TextIO,
+    normalized_feed=None,
+    pagination_pages=None,
+):
     """Process the queue of feeds that need polling.
 
     :param max_feeds: The maximum number of feeds to read from the queue (default 3).
@@ -364,7 +497,23 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
         return (False, False)
 
     if "xml" in content_type or feed_body[0:1] == b"<":
-        (ok, changed) = parse_feed_xml(source_feed, feed_body, output)
+        (ok, changed) = parse_feed_xml(
+            source_feed,
+            feed_body,
+            output,
+            parsed_feed=normalized_feed,
+        )
+        if ok:
+            for page_feed, max_entries in pagination_pages or []:
+                page_ok, page_changed = parse_feed_xml(
+                    source_feed,
+                    b"",
+                    output,
+                    max_entries=max_entries,
+                    parsed_feed=page_feed,
+                )
+                ok = ok and page_ok
+                changed = changed or page_changed
     else:
         try:
             feed_text_for_json = feed_body.decode("utf-8")
@@ -373,7 +522,12 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
             return (False, False)
 
         if "json" in content_type or feed_body[0:1] == b"{":
-            (ok, changed) = parse_feed_json(source_feed, feed_text_for_json, output)
+            (ok, changed) = parse_feed_json(
+                source_feed,
+                feed_text_for_json,
+                output,
+                parsed_feed=normalized_feed,
+            )
         else:
             ok = False
             source_feed.last_result = "Unknown Feed Type: " + content_type
@@ -396,7 +550,13 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
     return (ok, changed)
 
 
-def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
+def parse_feed_xml(
+    source_feed,
+    feed_content,
+    output: TextIO,
+    max_entries=None,
+    parsed_feed=None,
+):
 
     ok = True
     changed = False
@@ -409,10 +569,12 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
 
     # output.write(ret.content)
     try:
-        _customize_sanitizer(parser)
-        f = parser.parse(feed_content)  # need to start checking feed parser errors here
+        if parsed_feed is None:
+            _customize_sanitizer(parser)
+            f = parser.parse(feed_content)
+        else:
+            f = parsed_feed
         entries = f["entries"]
-        entries_available = len(entries)
         if max_entries is not None:
             entries = entries[:max_entries]
         if len(entries):
@@ -570,108 +732,16 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
             source_feed.json = f
             source_feed.save(update_fields=["json"])
 
-    if is_first and source_feed.posts.exists():
-        # If this is the first time we have parsed this
-        # then see if it's paginated and go back through its history
-        agent = get_agent(source_feed)
-        headers = {"User-Agent": agent}  # identify ourselves
-        max_pages = _positive_int_setting(
-            "FEEDS_MAX_PAGINATION_PAGES", DEFAULT_MAX_PAGINATION_PAGES
-        )
-        max_total_entries = _positive_int_setting(
-            "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
-        )
-        entries_processed = min(entries_available, max_total_entries)
-        pages_fetched = 0
-        current_url = source_feed.feed_url
-        visited_urls = {current_url}
-
-        if entries_available > max_total_entries:
-            source_feed._pagination_result = _pagination_limit(
-                "entries", max_total_entries
-            )
-
-        while not hasattr(source_feed, "_pagination_result"):
-            next_url = _next_feed_page(f, current_url)
-            if next_url is None:
-                break
-            safe, failure_reason = validate_feed_request_target(next_url)
-            if not safe:
-                source_feed._pagination_result = (
-                    "Pagination stopped: " + failure_reason
-                )[:255]
-                break
-            if next_url in visited_urls:
-                source_feed._pagination_result = "Pagination stopped at repeated URL"
-                break
-            if pages_fetched >= max_pages:
-                source_feed._pagination_result = _pagination_limit("pages", max_pages)
-                break
-            if entries_processed >= max_total_entries:
-                source_feed._pagination_result = _pagination_limit(
-                    "entries", max_total_entries
-                )
-                break
-
-            try:
-                ret = requests.get(
-                    next_url,
-                    headers=headers,
-                    verify=VERIFY_HTTPS,
-                    allow_redirects=False,
-                    timeout=20,
-                )
-            except (requests.RequestException, OSError) as ex:
-                source_feed._pagination_result = (
-                    "Pagination request failed: " + str(ex)
-                )[:255]
-                break
-
-            if ret.status_code < 200 or ret.status_code >= 300:
-                source_feed._pagination_result = (
-                    f"Pagination request failed: HTTP {ret.status_code}"
-                )
-                break
-
-            if not ret.content:
-                source_feed._pagination_result = "Pagination stopped at empty response"
-                break
-
-            remaining_entries = max_total_entries - entries_processed
-            page_feed = parser.parse(ret.content)
-            page_entries = page_feed.get("entries", [])
-            (page_ok, _page_changed) = parse_feed_xml(
-                source_feed,
-                ret.content,
-                output,
-                max_entries=remaining_entries,
-            )
-            if not page_ok:
-                source_feed._pagination_result = "Pagination stopped at invalid feed"
-                break
-
-            pages_fetched += 1
-            entries_processed += min(len(page_entries), remaining_entries)
-            visited_urls.add(next_url)
-            current_url = ret.url or next_url
-            visited_urls.add(current_url)
-            f = page_feed
-
-            if len(page_entries) > remaining_entries:
-                source_feed._pagination_result = _pagination_limit(
-                    "entries", max_total_entries
-                )
-
     return (ok, changed)
 
 
-def parse_feed_json(source_feed, feed_content, output: TextIO):
+def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None):
 
     ok = True
     changed = False
 
     try:
-        f = json.loads(feed_content)
+        f = parsed_feed if parsed_feed is not None else json.loads(feed_content)
         entries = f["items"]
         if len(entries):
             source_feed.last_success = (

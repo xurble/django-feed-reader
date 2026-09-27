@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import requests_mock
 from django.conf import settings
+from django.db import connection
 from django.test import override_settings
 from django.utils import timezone
 
@@ -79,24 +80,91 @@ class XMLFeedsTest(BaseTest):
         content2 = open(
             os.path.join(TEST_FILES_FOLDER, "atom_paged_2.xml"), "rb"
         ).read()
+        request_transaction_states = []
+
+        def paginated_content(request, context):
+            request_transaction_states.append(connection.in_atomic_block)
+            return content2
+
         mock.register_uri(
             "GET",
             "http://feed.com/atom_paged_2.xml",
             status_code=200,
-            content=content2,
+            content=paginated_content,
             headers={"Content-Type": "application/atom+xml", "etag": "page2"},
         )
 
         src = Source(name="test1", feed_url=BASE_URL, interval=0)
         src.save()
 
-        read_feed(src, output=NullOutput())
+        parse_transaction_states = []
+        original_parse = utils_internal.parser.parse
+
+        def tracked_parse(*args, **kwargs):
+            parse_transaction_states.append(connection.in_atomic_block)
+            return original_parse(*args, **kwargs)
+
+        with patch.object(
+            utils_internal.parser, "parse", side_effect=tracked_parse
+        ):
+            read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
         self.assertEqual(src.posts.count(), 2)
+        self.assertEqual(
+            list(src.posts.order_by("index").values_list("index", flat=True)),
+            [1, 2],
+        )
+        self.assertEqual(src.max_index, 2)
+        self.assertTrue(parse_transaction_states)
+        self.assertFalse(any(parse_transaction_states))
+        self.assertEqual(request_transaction_states, [False])
         titles = {p.title for p in src.posts.all()}
         self.assertIn("First page item", titles)
         self.assertIn("Second page item", titles)
+
+    def test_refresh_rolls_back_all_persistence_after_late_failure(self, mock):
+        self._populate_mock(
+            mock,
+            status=200,
+            test_file="podcast.xml",
+            content_type="application/rss+xml",
+        )
+        src = Source.objects.create(name="original", feed_url=BASE_URL, interval=400)
+        persisted_before = {
+            "name": src.name,
+            "max_index": src.max_index,
+            "last_polled": src.last_polled,
+        }
+        writes_seen = {}
+        original_finalize = utils._read_feed_finalize_interval_and_save
+
+        def fail_after_finalize(source_feed, old_interval, output):
+            original_finalize(source_feed, old_interval, output)
+            writes_seen["posts"] = source_feed.posts.count()
+            writes_seen["enclosures"] = sum(
+                post.enclosures.count() for post in source_feed.posts.all()
+            )
+            writes_seen["max_index"] = source_feed.max_index
+            raise RuntimeError("forced failure after persistence writes")
+
+        with patch.object(
+            utils,
+            "_read_feed_finalize_interval_and_save",
+            side_effect=fail_after_finalize,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "forced failure"):
+                read_feed(src, output=NullOutput())
+
+        self.assertGreater(writes_seen["posts"], 0)
+        self.assertGreater(writes_seen["enclosures"], 0)
+        self.assertEqual(writes_seen["max_index"], writes_seen["posts"])
+
+        persisted = Source.objects.get(pk=src.pk)
+        self.assertEqual(persisted.name, persisted_before["name"])
+        self.assertEqual(persisted.max_index, persisted_before["max_index"])
+        self.assertEqual(persisted.last_polled, persisted_before["last_polled"])
+        self.assertEqual(persisted.posts.count(), 0)
 
     def test_atom_stops_at_repeated_pagination_url(self, mock):
         mock.register_uri(
