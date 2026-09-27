@@ -4,7 +4,7 @@ import requests_mock
 from django.db import connections
 from django.test import override_settings
 
-from feeds import utils
+from feeds import utils, utils_internal
 from feeds.models import Enclosure, Post, Source
 
 from .base import BASE_URL, BaseTest, NullOutput
@@ -22,6 +22,52 @@ class FeedWriteRouter:
 @requests_mock.Mocker()
 class RefreshTransactionTests(BaseTest):
     databases = {"default", "other"}
+
+    def test_invalid_json_is_normalized_once_before_transaction(self, mock):
+        for body in (b'{"items": [', b"null"):
+            with self.subTest(body=body):
+                Source.objects.all().delete()
+                src = Source.objects.create(feed_url=BASE_URL, interval=400)
+                mock.get(
+                    BASE_URL, content=body, headers={"Content-Type": "application/json"}
+                )
+                states = []
+                loads = utils_internal.json.loads
+
+                def tracked_loads(*args, **kwargs):
+                    states.append(connections["default"].in_atomic_block)
+                    return loads(*args, **kwargs)
+
+                with patch.object(
+                    utils_internal.json, "loads", side_effect=tracked_loads
+                ):
+                    utils.read_feed(src, output=NullOutput())
+                src.refresh_from_db()
+                self.assertEqual(states, [False])
+                self.assertEqual(src.last_result, "Feed Parse Error")
+                self.assertEqual(src.interval, 640)
+                self.assertEqual(src.max_index, 0)
+                self.assertFalse(src.posts.exists())
+
+    def test_xml_normalization_exception_is_not_retried(self, mock):
+        src = Source.objects.create(feed_url=BASE_URL, interval=400)
+        mock.get(
+            BASE_URL, content=b"<rss/>", headers={"Content-Type": "application/xml"}
+        )
+        states = []
+
+        def failed_parse(*args, **kwargs):
+            states.append(connections["default"].in_atomic_block)
+            raise ValueError("malformed XML")
+
+        with patch.object(utils_internal.parser, "parse", side_effect=failed_parse):
+            utils.read_feed(src, output=NullOutput())
+        src.refresh_from_db()
+        self.assertEqual(states, [False])
+        self.assertEqual(src.last_result, "Feed Parse Error")
+        self.assertEqual(src.interval, 520)
+        self.assertEqual(src.max_index, 0)
+        self.assertFalse(src.posts.exists())
 
     def test_secondary_database_refresh_and_rollback(self, mock):
         for routers in ([], [FeedWriteRouter()]):

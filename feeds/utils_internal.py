@@ -108,6 +108,9 @@ def _next_feed_page(feed, current_url: str):
     return None
 
 
+_NORMALIZATION_FAILED = object()
+
+
 def normalize_feed_response(feed_body, content_type):
     """Parse a successful response into its in-memory feed representation."""
     if not isinstance(feed_body, (bytes, bytearray)) or not feed_body:
@@ -119,7 +122,7 @@ def normalize_feed_response(feed_body, content_type):
             _customize_sanitizer(parser)
             return parser.parse(feed_body)
         except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
-            return None
+            return _NORMALIZATION_FAILED
 
     try:
         feed_text = feed_body.decode("utf-8")
@@ -127,9 +130,12 @@ def normalize_feed_response(feed_body, content_type):
         return None
     if "json" in content_type or feed_body[0:1] == b"{":
         try:
-            return json.loads(feed_text)
+            parsed = json.loads(feed_text)
+            # JSON null is not a feed; None is reserved for callers that have
+            # not supplied a normalization result to the persistence helpers.
+            return parsed if parsed is not None else _NORMALIZATION_FAILED
         except (json.JSONDecodeError, TypeError, ValueError):
-            return None
+            return _NORMALIZATION_FAILED
     return None
 
 
@@ -143,6 +149,9 @@ def fetch_feed_pagination(
     """Fetch and validate initial-import pagination before persistence starts."""
     pages = []
     pagination_result = None
+
+    if normalized_feed is _NORMALIZATION_FAILED:
+        return pages, pagination_result
 
     if source_feed.posts.using(source_feed._state.db).exists():
         return pages, pagination_result
@@ -585,6 +594,8 @@ def parse_feed_xml(
 
     # output.write(ret.content)
     try:
+        if parsed_feed is _NORMALIZATION_FAILED:
+            raise ValueError("Feed normalization failed")
         if parsed_feed is None:
             _customize_sanitizer(parser)
             f = parser.parse(feed_content)
@@ -759,6 +770,8 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
     changed = False
 
     try:
+        if parsed_feed is _NORMALIZATION_FAILED:
+            raise ValueError("Feed normalization failed")
         f = parsed_feed if parsed_feed is not None else json.loads(feed_content)
         entries = f["items"]
         if len(entries):
