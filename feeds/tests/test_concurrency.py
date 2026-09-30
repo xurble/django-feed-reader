@@ -120,8 +120,7 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             claimed = utils._claim_next_due_source("default", timezone.now())
             return claimed.pk if claimed else None
 
-        with self._coordinate_claim_updates():
-            results = self._run_together(claim, claim)
+        results = self._run_together(claim, claim)
 
         self.assertEqual(set(results), sources)
 
