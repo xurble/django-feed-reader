@@ -5,6 +5,7 @@ from typing import List, Optional, TextIO, Tuple
 
 import requests
 from django.conf import settings
+from django.db import router, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from dripfeed import DripFeed, DripFeedException
@@ -16,7 +17,9 @@ from feeds.url_safety import (
 )
 from feeds.utils_internal import (
     VERIFY_HTTPS,
+    fetch_feed_pagination,
     get_agent,
+    normalize_feed_response,
     parse_feed,
     parse_retry_after_minutes,
 )
@@ -108,7 +111,6 @@ def _read_feed_apply_permanent_redirect(
         return
     source_feed.feed_url = resolved
     source_feed.last_result = "Moved"
-    source_feed.save(update_fields=["feed_url", "last_result"])
 
 
 def _read_feed_follow_temporary_redirect(
@@ -164,15 +166,6 @@ def _read_feed_follow_temporary_redirect(
                 source_feed.last_302_url = " "
                 source_feed.last_302_start = None
                 source_feed.last_result = ("Permanent Redirect to " + new_url)[:255]
-
-                source_feed.save(
-                    update_fields=[
-                        "feed_url",
-                        "last_result",
-                        "last_302_url",
-                        "last_302_start",
-                    ]
-                )
 
             else:
                 source_feed.last_result = (
@@ -298,6 +291,9 @@ def _read_feed_process_success_body(
     ret: requests.Response,
     output: TextIO,
     was302: bool,
+    normalized_feed,
+    pagination_pages,
+    pagination_result,
 ) -> None:
     ok = True
     changed = False
@@ -320,8 +316,9 @@ def _read_feed_process_success_body(
         feed_body=ret.content,
         content_type=content_type,
         output=output,
+        normalized_feed=normalized_feed,
+        pagination_pages=pagination_pages,
     )
-    pagination_result = getattr(source_feed, "_pagination_result", None)
 
     if ok and changed:
         source_feed.interval /= 2
@@ -350,6 +347,7 @@ def _read_feed_finalize_interval_and_save(
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
     source_feed.save(
+        using=source_feed._state.db,
         update_fields=[
             "due_poll",
             "interval",
@@ -366,7 +364,7 @@ def _read_feed_finalize_interval_and_save(
             "is_cloudflare",
             "last_change",
             "alt_url",
-        ]
+        ],
     )
 
 
@@ -380,6 +378,8 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
     :type output: TextIO
     """
     old_interval = source_feed.interval
+    original_feed_url = source_feed.feed_url
+    database = router.db_for_write(Source, instance=source_feed)
 
     source_feed.last_polled = timezone.now()
 
@@ -398,10 +398,42 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
     ret = _read_feed_initial_get(source_feed, feed_url, headers, output)
     ret, was302 = _read_feed_process_http_response(source_feed, ret, output, headers)
 
+    pagination_pages = []
+    pagination_result = None
+    normalized_feed = None
     if ret and ret.status_code >= 200 and ret.status_code < 300:
-        _read_feed_process_success_body(source_feed, ret, output, was302)
+        content_type = ret.headers.get("Content-Type", "Not Set")
+        normalized_feed = normalize_feed_response(ret.content, content_type)
+        pagination_pages, pagination_result = fetch_feed_pagination(
+            source_feed,
+            ret.content,
+            content_type,
+            output,
+            normalized_feed=normalized_feed,
+        )
 
-    _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
+    with transaction.atomic(using=database):
+        source_feed._state.db = database
+        source_feed.max_index = (
+            Source.objects.using(database)
+            .select_for_update()
+            .values_list("max_index", flat=True)
+            .get(pk=source_feed.pk)
+        )
+        if source_feed.feed_url != original_feed_url:
+            source_feed.save(using=database, update_fields=["feed_url"])
+        if ret and ret.status_code >= 200 and ret.status_code < 300:
+            _read_feed_process_success_body(
+                source_feed,
+                ret,
+                output,
+                was302,
+                normalized_feed,
+                pagination_pages,
+                pagination_result,
+            )
+
+        _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
 
 
 def test_feed(

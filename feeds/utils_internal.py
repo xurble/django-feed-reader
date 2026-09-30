@@ -11,6 +11,7 @@ import feedparser as parser
 import pyrfc3339
 import requests
 from django.conf import settings
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from feeds.models import Enclosure, Post, Source
@@ -107,23 +108,166 @@ def _next_feed_page(feed, current_url: str):
     return None
 
 
+_NORMALIZATION_FAILED = object()
+
+
+def normalize_feed_response(feed_body, content_type):
+    """Parse a successful response into its in-memory feed representation."""
+    if not isinstance(feed_body, (bytes, bytearray)) or not feed_body:
+        return None
+
+    feed_body = bytes(feed_body)
+    if "xml" in content_type or feed_body[0:1] == b"<":
+        try:
+            _customize_sanitizer(parser)
+            return parser.parse(feed_body)
+        except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
+            return _NORMALIZATION_FAILED
+
+    try:
+        feed_text = feed_body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "json" in content_type or feed_body[0:1] == b"{":
+        try:
+            parsed = json.loads(feed_text)
+            # JSON null is not a feed; None is reserved for callers that have
+            # not supplied a normalization result to the persistence helpers.
+            return parsed if parsed is not None else _NORMALIZATION_FAILED
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return _NORMALIZATION_FAILED
+    return None
+
+
+def fetch_feed_pagination(
+    source_feed,
+    feed_body,
+    content_type,
+    output: TextIO,
+    normalized_feed=None,
+):
+    """Fetch and validate initial-import pagination before persistence starts."""
+    pages = []
+    pagination_result = None
+
+    if normalized_feed is _NORMALIZATION_FAILED:
+        return pages, pagination_result
+
+    if source_feed.posts.using(source_feed._state.db).exists():
+        return pages, pagination_result
+    if not isinstance(feed_body, (bytes, bytearray)) or not feed_body:
+        return pages, pagination_result
+    if "xml" not in content_type and bytes(feed_body)[0:1] != b"<":
+        return pages, pagination_result
+
+    try:
+        feed = normalized_feed or parser.parse(bytes(feed_body))
+        entries = feed["entries"]
+    except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
+        return pages, pagination_result
+    if not entries:
+        return pages, pagination_result
+
+    max_pages = _positive_int_setting(
+        "FEEDS_MAX_PAGINATION_PAGES", DEFAULT_MAX_PAGINATION_PAGES
+    )
+    max_total_entries = _positive_int_setting(
+        "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
+    )
+    entries_processed = min(len(entries), max_total_entries)
+    pages_fetched = 0
+    current_url = source_feed.feed_url
+    visited_urls = {current_url}
+
+    if len(entries) > max_total_entries:
+        pagination_result = _pagination_limit("entries", max_total_entries)
+
+    while pagination_result is None:
+        next_url = _next_feed_page(feed, current_url)
+        if next_url is None:
+            break
+        safe, failure_reason = validate_feed_request_target(next_url)
+        if not safe:
+            pagination_result = ("Pagination stopped: " + failure_reason)[:255]
+            break
+        if next_url in visited_urls:
+            pagination_result = "Pagination stopped at repeated URL"
+            break
+        if pages_fetched >= max_pages:
+            pagination_result = _pagination_limit("pages", max_pages)
+            break
+        if entries_processed >= max_total_entries:
+            pagination_result = _pagination_limit("entries", max_total_entries)
+            break
+
+        try:
+            ret = requests.get(
+                next_url,
+                headers={"User-Agent": get_agent(source_feed)},
+                verify=VERIFY_HTTPS,
+                allow_redirects=False,
+                timeout=20,
+            )
+        except (requests.RequestException, OSError) as ex:
+            pagination_result = ("Pagination request failed: " + str(ex))[:255]
+            break
+
+        if ret.status_code < 200 or ret.status_code >= 300:
+            pagination_result = f"Pagination request failed: HTTP {ret.status_code}"
+            break
+        if not ret.content:
+            pagination_result = "Pagination stopped at empty response"
+            break
+
+        remaining_entries = max_total_entries - entries_processed
+        try:
+            page_feed = parser.parse(ret.content)
+            page_entries = page_feed.get("entries", [])
+        except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
+            page_entries = []
+        if not page_entries:
+            pagination_result = "Pagination stopped at invalid feed"
+            break
+
+        pages.append((page_feed, remaining_entries))
+        pages_fetched += 1
+        entries_processed += min(len(page_entries), remaining_entries)
+        visited_urls.add(next_url)
+        current_url = ret.url or next_url
+        visited_urls.add(current_url)
+        feed = page_feed
+
+        if len(page_entries) > remaining_entries:
+            pagination_result = _pagination_limit("entries", max_total_entries)
+
+    return pages, pagination_result
+
+
 def _posts_by_guid_lookup(source_feed: Source) -> dict:
     """Load posts for this source keyed by guid (one query + enclosure prefetch)."""
     posts_by_guid = {}
-    for p in Post.objects.filter(source=source_feed).prefetch_related("enclosures"):
+    for p in (
+        Post.objects.using(source_feed._state.db)
+        .filter(source=source_feed)
+        .prefetch_related(
+            Prefetch("enclosures", queryset=Enclosure.objects.using(source_feed._state.db))
+        )
+    ):
         if p.guid is not None:
             posts_by_guid[p.guid] = p
     return posts_by_guid
 
 
-def _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields):
+def _commit_enclosure_batch(
+    delete_ids, to_update, to_create, update_fields, using=None
+):
     """Apply enclosure deletes, updates, and creates with minimal round-trips."""
     if delete_ids:
-        Enclosure.objects.filter(pk__in=delete_ids).delete()
+        Enclosure.objects.using(using).filter(pk__in=delete_ids).delete()
     if to_update:
-        Enclosure.objects.bulk_update(to_update, update_fields)
+        Enclosure.objects.using(using).bulk_update(to_update, update_fields)
     if to_create:
-        Enclosure.objects.bulk_create(to_create)
+        Enclosure.objects.using(using).bulk_create(to_create)
 
 
 def _xml_entry_enclosure_dicts(e) -> list:
@@ -204,7 +348,10 @@ def _batch_sync_enclosures_normalized(
     delete_ids = []
     to_create = []
 
-    for ee in list(p.enclosures.all()):
+    enclosures = getattr(p, "_prefetched_objects_cache", {}).get("enclosures")
+    if enclosures is None:
+        enclosures = p.enclosures.using(p._state.db).all()
+    for ee in list(enclosures):
         found_enclosure = False
         for pe in items:
             if pe["href"] == ee.href and ee.href not in seen_files:
@@ -246,7 +393,9 @@ def _batch_sync_enclosures_normalized(
         except (KeyError, TypeError, ValueError):
             pass
 
-    _commit_enclosure_batch(delete_ids, to_update, to_create, update_fields)
+    _commit_enclosure_batch(
+        delete_ids, to_update, to_create, update_fields, using=p._state.db
+    )
 
 
 def _batch_sync_enclosures_xml(p: Post, e):
@@ -338,7 +487,14 @@ def is_valid_post_guid(x):
     return (x is not None) and (len(x) <= Post.GUID_MAX_LENGTH)
 
 
-def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
+def parse_feed(
+    source_feed: Source,
+    feed_body,
+    content_type,
+    output: TextIO,
+    normalized_feed=None,
+    pagination_pages=None,
+):
     """Process the queue of feeds that need polling.
 
     :param max_feeds: The maximum number of feeds to read from the queue (default 3).
@@ -364,7 +520,23 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
         return (False, False)
 
     if "xml" in content_type or feed_body[0:1] == b"<":
-        (ok, changed) = parse_feed_xml(source_feed, feed_body, output)
+        (ok, changed) = parse_feed_xml(
+            source_feed,
+            feed_body,
+            output,
+            parsed_feed=normalized_feed,
+        )
+        if ok:
+            for page_feed, max_entries in pagination_pages or []:
+                page_ok, page_changed = parse_feed_xml(
+                    source_feed,
+                    b"",
+                    output,
+                    max_entries=max_entries,
+                    parsed_feed=page_feed,
+                )
+                ok = ok and page_ok
+                changed = changed or page_changed
     else:
         try:
             feed_text_for_json = feed_body.decode("utf-8")
@@ -373,7 +545,12 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
             return (False, False)
 
         if "json" in content_type or feed_body[0:1] == b"{":
-            (ok, changed) = parse_feed_json(source_feed, feed_text_for_json, output)
+            (ok, changed) = parse_feed_json(
+                source_feed,
+                feed_text_for_json,
+                output,
+                parsed_feed=normalized_feed,
+            )
         else:
             ok = False
             source_feed.last_result = "Unknown Feed Type: " + content_type
@@ -384,24 +561,32 @@ def parse_feed(source_feed: Source, feed_body, content_type, output: TextIO):
 
         # Assign indices in one round-trip (avoid per-post save + signal overhead).
         posts = list(
-            Post.objects.filter(source=source_feed, index=0).order_by("created")
+            Post.objects.using(source_feed._state.db)
+            .filter(source=source_feed, index=0)
+            .order_by("created")
         )
         if posts:
             start = source_feed.max_index
             for i, p in enumerate(posts, start=1):
                 p.index = start + i
-            Post.objects.bulk_update(posts, ["index"])
+            Post.objects.using(source_feed._state.db).bulk_update(posts, ["index"])
             source_feed.max_index = start + len(posts)
 
     return (ok, changed)
 
 
-def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
+def parse_feed_xml(
+    source_feed,
+    feed_content,
+    output: TextIO,
+    max_entries=None,
+    parsed_feed=None,
+):
 
     ok = True
     changed = False
 
-    is_first = not source_feed.posts.exists()
+    is_first = not source_feed.posts.using(source_feed._state.db).exists()
     if is_first and max_entries is None:
         max_entries = _positive_int_setting(
             "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
@@ -409,10 +594,14 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
 
     # output.write(ret.content)
     try:
-        _customize_sanitizer(parser)
-        f = parser.parse(feed_content)  # need to start checking feed parser errors here
+        if parsed_feed is _NORMALIZATION_FAILED:
+            raise ValueError("Feed normalization failed")
+        if parsed_feed is None:
+            _customize_sanitizer(parser)
+            f = parser.parse(feed_content)
+        else:
+            f = parsed_feed
         entries = f["entries"]
-        entries_available = len(entries)
         if max_entries is not None:
             entries = entries[:max_entries]
         if len(entries):
@@ -428,25 +617,27 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
         entries = []
         ok = False
 
-    source_feed.save(update_fields=["last_success", "last_result"])
+    source_feed.save(
+        using=source_feed._state.db, update_fields=["last_success", "last_result"]
+    )
 
     if ok:
         try:
             source_feed.name = f.feed.title
-            source_feed.save(update_fields=["name"])
+            source_feed.save(using=source_feed._state.db, update_fields=["name"])
         except Exception as ex:
             logger.warning("Update name error:" + str(ex))
             pass
 
         try:
             source_feed.site_url = f.feed.link
-            source_feed.save(update_fields=["site_url"])
+            source_feed.save(using=source_feed._state.db, update_fields=["site_url"])
         except Exception:
             pass
 
         try:
             source_feed.image_url = f.feed.image.href
-            source_feed.save(update_fields=["image_url"])
+            source_feed.save(using=source_feed._state.db, update_fields=["image_url"])
         except Exception:
             pass
 
@@ -463,7 +654,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
             pass
 
         try:
-            source_feed.save(update_fields=["description"])
+            source_feed.save(using=source_feed._state.db, update_fields=["description"])
         except Exception:
             pass
 
@@ -556,7 +747,7 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
                 output.write(str(ex))
                 output.write(p.body)
 
-            p.save()
+            p.save(using=source_feed._state.db)
             posts_by_guid[guid] = p
 
             try:
@@ -568,110 +759,20 @@ def parse_feed_xml(source_feed, feed_content, output: TextIO, max_entries=None):
             # Kill the entries
             f["entries"] = None
             source_feed.json = f
-            source_feed.save(update_fields=["json"])
-
-    if is_first and source_feed.posts.exists():
-        # If this is the first time we have parsed this
-        # then see if it's paginated and go back through its history
-        agent = get_agent(source_feed)
-        headers = {"User-Agent": agent}  # identify ourselves
-        max_pages = _positive_int_setting(
-            "FEEDS_MAX_PAGINATION_PAGES", DEFAULT_MAX_PAGINATION_PAGES
-        )
-        max_total_entries = _positive_int_setting(
-            "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
-        )
-        entries_processed = min(entries_available, max_total_entries)
-        pages_fetched = 0
-        current_url = source_feed.feed_url
-        visited_urls = {current_url}
-
-        if entries_available > max_total_entries:
-            source_feed._pagination_result = _pagination_limit(
-                "entries", max_total_entries
-            )
-
-        while not hasattr(source_feed, "_pagination_result"):
-            next_url = _next_feed_page(f, current_url)
-            if next_url is None:
-                break
-            safe, failure_reason = validate_feed_request_target(next_url)
-            if not safe:
-                source_feed._pagination_result = (
-                    "Pagination stopped: " + failure_reason
-                )[:255]
-                break
-            if next_url in visited_urls:
-                source_feed._pagination_result = "Pagination stopped at repeated URL"
-                break
-            if pages_fetched >= max_pages:
-                source_feed._pagination_result = _pagination_limit("pages", max_pages)
-                break
-            if entries_processed >= max_total_entries:
-                source_feed._pagination_result = _pagination_limit(
-                    "entries", max_total_entries
-                )
-                break
-
-            try:
-                ret = requests.get(
-                    next_url,
-                    headers=headers,
-                    verify=VERIFY_HTTPS,
-                    allow_redirects=False,
-                    timeout=20,
-                )
-            except (requests.RequestException, OSError) as ex:
-                source_feed._pagination_result = (
-                    "Pagination request failed: " + str(ex)
-                )[:255]
-                break
-
-            if ret.status_code < 200 or ret.status_code >= 300:
-                source_feed._pagination_result = (
-                    f"Pagination request failed: HTTP {ret.status_code}"
-                )
-                break
-
-            if not ret.content:
-                source_feed._pagination_result = "Pagination stopped at empty response"
-                break
-
-            remaining_entries = max_total_entries - entries_processed
-            page_feed = parser.parse(ret.content)
-            page_entries = page_feed.get("entries", [])
-            (page_ok, _page_changed) = parse_feed_xml(
-                source_feed,
-                ret.content,
-                output,
-                max_entries=remaining_entries,
-            )
-            if not page_ok:
-                source_feed._pagination_result = "Pagination stopped at invalid feed"
-                break
-
-            pages_fetched += 1
-            entries_processed += min(len(page_entries), remaining_entries)
-            visited_urls.add(next_url)
-            current_url = ret.url or next_url
-            visited_urls.add(current_url)
-            f = page_feed
-
-            if len(page_entries) > remaining_entries:
-                source_feed._pagination_result = _pagination_limit(
-                    "entries", max_total_entries
-                )
+            source_feed.save(using=source_feed._state.db, update_fields=["json"])
 
     return (ok, changed)
 
 
-def parse_feed_json(source_feed, feed_content, output: TextIO):
+def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None):
 
     ok = True
     changed = False
 
     try:
-        f = json.loads(feed_content)
+        if parsed_feed is _NORMALIZATION_FAILED:
+            raise ValueError("Feed normalization failed")
+        f = parsed_feed if parsed_feed is not None else json.loads(feed_content)
         entries = f["items"]
         if len(entries):
             source_feed.last_success = (
@@ -682,7 +783,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             source_feed.interval += 120
             ok = False
 
-        source_feed.save(update_fields=["last_success", "last_result"])
+        source_feed.save(
+            using=source_feed._state.db, update_fields=["last_success", "last_result"]
+        )
 
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         source_feed.last_result = "Feed Parse Error"
@@ -703,7 +806,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             source_feed.site_url = f["home_page_url"]
             source_feed.name = f["title"]
 
-            source_feed.save(update_fields=["site_url", "name"])
+            source_feed.save(
+                using=source_feed._state.db, update_fields=["site_url", "name"]
+            )
 
         except Exception:
             pass
@@ -714,7 +819,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
                 source_feed.description = parser.sanitizer._sanitize_html(
                     f["description"], "utf-8", "text/html"
                 )
-                source_feed.save(update_fields=["description"])
+                source_feed.save(
+                    using=source_feed._state.db, update_fields=["description"]
+                )
         except Exception:
             pass
 
@@ -723,7 +830,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
             source_feed.name = parser.sanitizer._sanitize_html(
                 source_feed.name, "utf-8", "text/html"
             )
-            source_feed.save(update_fields=["name"])
+            source_feed.save(using=source_feed._state.db, update_fields=["name"])
 
         except Exception:
             pass
@@ -731,7 +838,9 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
         try:
             if "icon" in f:
                 source_feed.image_url = f["icon"]
-                source_feed.save(update_fields=["image_url"])
+                source_feed.save(
+                    using=source_feed._state.db, update_fields=["image_url"]
+                )
         except Exception:
             pass
 
@@ -812,7 +921,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
                 output.write(str(ex))
                 output.write(p.body)
 
-            p.save()
+            p.save(using=source_feed._state.db)
             posts_by_guid[guid] = p
 
             try:
@@ -823,6 +932,6 @@ def parse_feed_json(source_feed, feed_content, output: TextIO):
         if SAVE_JSON:
             f["items"] = []
             source_feed.json = f
-            source_feed.save(update_fields=["json"])
+            source_feed.save(using=source_feed._state.db, update_fields=["json"])
 
     return (ok, changed)
