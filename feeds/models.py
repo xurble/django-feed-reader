@@ -408,7 +408,9 @@ class Post(models.Model):
             self.index = source.max_index + 1
             source.max_index = self.index
             source.save(using=database, update_fields=["max_index"])
-            self.source.max_index = self.index
+            cached_source = self._state.fields_cache.get("source")
+            if cached_source is not None and cached_source._state.db == database:
+                cached_source.max_index = self.index
             return super().save(*args, **kwargs)
 
 

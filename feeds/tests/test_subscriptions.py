@@ -854,7 +854,7 @@ class NonDefaultDatabaseStateUpdateTest(BaseTest):
         )
 
         post = Post.objects.using("other").create(
-            source=source,
+            source_id=source.pk,
             title="Other",
             body="body",
             created=timezone.now(),

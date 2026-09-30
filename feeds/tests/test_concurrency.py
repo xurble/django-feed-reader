@@ -1,11 +1,14 @@
 """Transactional-database concurrency tests for feed state invariants."""
 
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from contextlib import contextmanager
+from threading import Barrier, Event, Lock
 from unittest import skipIf
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection
+from django.db.models.query import QuerySet
 from django.test import TransactionTestCase
 from django.utils import timezone
 
@@ -38,6 +41,62 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             futures = [executor.submit(run, worker) for worker in workers]
             return [future.result(timeout=15) for future in futures]
 
+    @contextmanager
+    def _coordinate_claim_updates(self):
+        """Release both conditional claim updates at the same critical point."""
+        original_update = QuerySet.update
+        update_barrier = Barrier(2)
+        coordinated_calls = 0
+        call_lock = Lock()
+
+        def coordinated_update(queryset, **kwargs):
+            nonlocal coordinated_calls
+            if set(kwargs) == {"poll_claim_token", "poll_claim_expires"}:
+                with call_lock:
+                    coordinated_calls += 1
+                update_barrier.wait(timeout=10)
+            return original_update(queryset, **kwargs)
+
+        with patch.object(QuerySet, "update", coordinated_update):
+            yield
+        self.assertEqual(coordinated_calls, 2)
+
+    @contextmanager
+    def _coordinate_source_row_locks(self):
+        """Hold the first source lock until the second worker reaches that lock."""
+        original_fetch_all = QuerySet._fetch_all
+        first_locked = Event()
+        second_entering_lock = Event()
+        call_lock = Lock()
+        coordinated_calls = 0
+
+        def coordinated_fetch_all(queryset):
+            nonlocal coordinated_calls
+            if (
+                queryset.model is not Source
+                or not queryset.query.select_for_update
+                or queryset._result_cache is not None
+            ):
+                return original_fetch_all(queryset)
+            with call_lock:
+                coordinated_calls += 1
+                call_number = coordinated_calls
+            if call_number == 1:
+                result = original_fetch_all(queryset)
+                first_locked.set()
+                if not second_entering_lock.wait(timeout=10):
+                    raise AssertionError("second worker did not reach the source lock")
+                return result
+            if call_number == 2:
+                if not first_locked.wait(timeout=10):
+                    raise AssertionError("first worker did not acquire the source lock")
+                second_entering_lock.set()
+            return original_fetch_all(queryset)
+
+        with patch.object(QuerySet, "_fetch_all", coordinated_fetch_all):
+            yield
+        self.assertEqual(coordinated_calls, 2)
+
     def test_workers_contending_for_one_source_get_one_claim(self):
         source = Source.objects.create(feed_url="http://claim.example.com/feed")
 
@@ -45,7 +104,8 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             claimed = utils._claim_next_due_source("default", timezone.now())
             return claimed.pk if claimed else None
 
-        results = self._run_together(claim, claim)
+        with self._coordinate_claim_updates():
+            results = self._run_together(claim, claim)
 
         self.assertEqual(results.count(source.pk), 1)
         self.assertEqual(results.count(None), 1)
@@ -60,7 +120,10 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             claimed = utils._claim_next_due_source("default", timezone.now())
             return claimed.pk if claimed else None
 
-        self.assertEqual(set(self._run_together(claim, claim)), sources)
+        with self._coordinate_claim_updates():
+            results = self._run_together(claim, claim)
+
+        self.assertEqual(set(results), sources)
 
     def test_concurrent_automatic_post_indexes_are_unique_and_ordered(self):
         source = Source.objects.create(feed_url="http://posts.example.com/feed")
@@ -75,9 +138,10 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             )
             return post.index
 
-        indexes = self._run_together(
-            lambda: create_post("one"), lambda: create_post("two")
-        )
+        with self._coordinate_source_row_locks():
+            indexes = self._run_together(
+                lambda: create_post("one"), lambda: create_post("two")
+            )
 
         source.refresh_from_db()
         self.assertEqual(sorted(indexes), [1, 2])
@@ -117,14 +181,15 @@ class TransactionalConcurrencyTests(TransactionTestCase):
         source = Source.objects.create(feed_url="http://subs.example.com/feed")
         users = [User.objects.create_user(f"create-{i}") for i in range(2)]
 
-        self._run_together(
-            *(
-                lambda user=user: Subscription.objects.create(
-                    user_id=user.pk, source_id=source.pk
+        with self._coordinate_source_row_locks():
+            self._run_together(
+                *(
+                    lambda user=user: Subscription.objects.create(
+                        user_id=user.pk, source_id=source.pk
+                    )
+                    for user in users
                 )
-                for user in users
             )
-        )
 
         source.refresh_from_db()
         self.assertEqual(source.num_subs, 2)
@@ -136,12 +201,13 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             Subscription.objects.create(user=user, source=source) for user in users
         ]
 
-        self._run_together(
-            *(
-                lambda pk=sub.pk: Subscription.objects.get(pk=pk).delete()
-                for sub in subscriptions
+        with self._coordinate_source_row_locks():
+            self._run_together(
+                *(
+                    lambda pk=sub.pk: Subscription.objects.get(pk=pk).delete()
+                    for sub in subscriptions
+                )
             )
-        )
 
         source.refresh_from_db()
         self.assertEqual(source.num_subs, 0)
@@ -159,7 +225,8 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             subscription.source_id = source_b.pk
             subscription.save()
 
-        self._run_together(*(lambda pk=sub.pk: move(pk) for sub in subscriptions))
+        with self._coordinate_source_row_locks():
+            self._run_together(*(lambda pk=sub.pk: move(pk) for sub in subscriptions))
 
         source_a.refresh_from_db()
         source_b.refresh_from_db()
