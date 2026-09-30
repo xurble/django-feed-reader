@@ -23,10 +23,33 @@ class DenyFeedModelsOnOtherRouter:
         return None
 
 
+class PollClaimMigrationTests(TransactionTestCase):
+    migrate_from = ("feeds", "0019_performance_indexes")
+    migrate_to = ("feeds", "0020_source_poll_claim")
+
+    def test_existing_sources_are_immediately_claimable(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        OldSource = old_apps.get_model("feeds", "Source")
+        source = OldSource.objects.create(feed_url="http://migration.example.com/feed")
+        self.addCleanup(
+            lambda: MigrationExecutor(connection).migrate([self.migrate_to])
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        migrated = new_apps.get_model("feeds", "Source").objects.get(pk=source.pk)
+
+        self.assertIsNone(migrated.poll_claim_token)
+        self.assertIsNone(migrated.poll_claim_expires)
+
+
 class LegacyDuplicatePreflightMigrationTests(TransactionTestCase):
     migrate_from = ("feeds", "0016_source_due_poll_timezone_aware_default")
     migrate_to = ("feeds", "0017_add_integrity_constraints")
-    migrate_latest = ("feeds", "0019_performance_indexes")
+    migrate_latest = ("feeds", "0020_source_poll_claim")
 
     def setUp(self):
         super().setUp()
@@ -212,7 +235,7 @@ class NonDefaultDatabaseMigrationTests(TransactionTestCase):
     database_alias = "other"
     migrate_from = ("feeds", "0016_source_due_poll_timezone_aware_default")
     migrate_to = ("feeds", "0017_add_integrity_constraints")
-    migrate_latest = ("feeds", "0019_performance_indexes")
+    migrate_latest = ("feeds", "0020_source_poll_claim")
 
     def setUp(self):
         super().setUp()
@@ -278,7 +301,7 @@ class NonDefaultDatabaseMigrationTests(TransactionTestCase):
 class RoutedOutDatabaseMigrationTests(TransactionTestCase):
     databases = {"default", "other"}
     database_alias = "other"
-    migrate_latest = ("feeds", "0019_performance_indexes")
+    migrate_latest = ("feeds", "0020_source_poll_claim")
 
     def setUp(self):
         super().setUp()
@@ -321,7 +344,7 @@ class RoutedOutDatabaseMigrationTests(TransactionTestCase):
 class MySQLPublishedMigrationRecoveryTests(TransactionTestCase):
     migrate_from = ("feeds", "0016_source_due_poll_timezone_aware_default")
     migrate_to = ("feeds", "0018_mysql_compatible_unique_constraints")
-    migrate_latest = ("feeds", "0019_performance_indexes")
+    migrate_latest = ("feeds", "0020_source_poll_claim")
 
     def setUp(self):
         super().setUp()

@@ -79,3 +79,76 @@ jobs:
           MYSQL_PORT: 3306
         run: |
           pytest feeds/tests/test_migrations.py -v --tb=short
+
+  postgres-concurrency:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: django_feed_reader
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready --username=postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "Django>=4.2,<5" psycopg2-binary
+          pip install -e ".[test]"
+      - name: Run PostgreSQL concurrency tests
+        env:
+          DJANGO_SETTINGS_MODULE: tests.postgres_settings
+          POSTGRES_DB: django_feed_reader
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: 5432
+        run: |
+          pytest feeds/tests/test_concurrency.py -v --tb=short
+
+  mysql-concurrency:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: django_feed_reader
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "Django>=4.2,<5" mysqlclient
+          pip install -e ".[test]"
+      - name: Run MySQL concurrency tests
+        env:
+          DJANGO_SETTINGS_MODULE: tests.mysql_settings
+          MYSQL_DATABASE: django_feed_reader
+          MYSQL_USER: root
+          MYSQL_PASSWORD: root
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3306
+        run: |
+          pytest feeds/tests/test_concurrency.py -v --tb=short

@@ -1,5 +1,8 @@
 
 ### 2.0.1
+- Concurrency: Coordinate scheduled pollers with renewable leases on PostgreSQL and
+  MySQL; make automatic post indexes, read markers, and subscription counts safe
+  under concurrent workers
 - Security: Apply one secure-by-default SSRF policy to initial, alternate,
   pagination, redirect, and test feed requests; private-network feeds require
   the explicit `FEEDS_ALLOW_PRIVATE_NETWORKS=True` compatibility opt-out

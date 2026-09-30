@@ -10,6 +10,7 @@ _DEFAULTS = {
     "FEEDS_USER_AGENT": "django-feed-reader",
     "FEEDS_SERVER": server,
     "FEEDS_ALLOW_PRIVATE_NETWORKS": False,
+    "FEEDS_POLL_LEASE_SECONDS": 600,
 }
 
 for key, value in _DEFAULTS.items():

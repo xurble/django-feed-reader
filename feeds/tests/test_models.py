@@ -193,6 +193,41 @@ class PostIntegrityConstraintTests(TransactionTestCase):
         p.refresh_from_db()
         self.assertEqual(p.guid_digest, hashlib.sha256(b"g1").hexdigest())
 
+    def test_automatic_index_uses_current_locked_source_state(self):
+        src = self._source()
+        stale_source = Source.objects.get(pk=src.pk)
+        Source.objects.filter(pk=src.pk).update(max_index=7)
+
+        post = Post.objects.create(
+            source=stale_source,
+            title="allocated",
+            body="body",
+            created=timezone.now(),
+            index=None,
+        )
+
+        src.refresh_from_db()
+        self.assertEqual(post.index, 8)
+        self.assertEqual(src.max_index, 8)
+
+    def test_automatic_index_and_insert_roll_back_together(self):
+        src = self._source()
+
+        with self.assertRaisesRegex(RuntimeError, "rollback"):
+            with transaction.atomic():
+                Post.objects.create(
+                    source=src,
+                    title="rolled back",
+                    body="body",
+                    created=timezone.now(),
+                    index=None,
+                )
+                raise RuntimeError("rollback")
+
+        src.refresh_from_db()
+        self.assertEqual(src.max_index, 0)
+        self.assertFalse(Post.objects.filter(title="rolled back").exists())
+
 
 class EnclosureMediaTypeTests(TransactionTestCase):
     def _post(self):

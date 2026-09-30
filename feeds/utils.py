@@ -1,5 +1,6 @@
 import datetime
 import logging
+import uuid
 from sys import stdout
 from typing import List, Optional, TextIO, Tuple
 
@@ -36,6 +37,84 @@ logger = logging.getLogger(__file__)
 
 REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECT_HOPS = 10
+DEFAULT_POLL_LEASE_SECONDS = 600
+
+
+class PollClaimLost(RuntimeError):
+    """The scheduled poll no longer owns its source lease."""
+
+
+def _poll_lease_duration() -> datetime.timedelta:
+    try:
+        seconds = int(
+            getattr(settings, "FEEDS_POLL_LEASE_SECONDS", DEFAULT_POLL_LEASE_SECONDS)
+        )
+    except (TypeError, ValueError):
+        seconds = DEFAULT_POLL_LEASE_SECONDS
+    if seconds <= 0:
+        seconds = DEFAULT_POLL_LEASE_SECONDS
+    return datetime.timedelta(seconds=seconds)
+
+
+def _claim_next_due_source(database, now, exclude_ids=()):
+    claimable = Q(poll_claim_token__isnull=True) | Q(poll_claim_expires__lte=now)
+    while True:
+        source_id = (
+            Source.objects.using(database)
+            .filter(live=True, due_poll__lt=now)
+            .filter(claimable)
+            .exclude(pk__in=exclude_ids)
+            .order_by("due_poll", "pk")
+            .values_list("pk", flat=True)
+            .first()
+        )
+        if source_id is None:
+            return None
+        token = uuid.uuid4()
+        expires = timezone.now() + _poll_lease_duration()
+        updated = (
+            Source.objects.using(database)
+            .filter(pk=source_id, live=True, due_poll__lt=now)
+            .filter(Q(poll_claim_token__isnull=True) | Q(poll_claim_expires__lte=now))
+            .update(poll_claim_token=token, poll_claim_expires=expires)
+        )
+        if updated:
+            source = Source.objects.using(database).get(pk=source_id)
+            source._poll_claim_token = token
+            return source
+
+
+def _renew_poll_claim(source_feed: Source) -> None:
+    token = getattr(source_feed, "_poll_claim_token", None)
+    if token is None:
+        return
+    database = source_feed._state.db or router.db_for_write(
+        Source, instance=source_feed
+    )
+    now = timezone.now()
+    updated = (
+        Source.objects.using(database)
+        .filter(
+            pk=source_feed.pk,
+            poll_claim_token=token,
+            poll_claim_expires__gt=now,
+        )
+        .update(poll_claim_expires=now + _poll_lease_duration())
+    )
+    if not updated:
+        raise PollClaimLost(f"Poll claim lost for source {source_feed.pk}")
+
+
+def _release_poll_claim(source_feed: Source) -> None:
+    token = getattr(source_feed, "_poll_claim_token", None)
+    if token is None:
+        return
+    database = source_feed._state.db or router.db_for_write(
+        Source, instance=source_feed
+    )
+    Source.objects.using(database).filter(
+        pk=source_feed.pk, poll_claim_token=token
+    ).update(poll_claim_token=None, poll_claim_expires=None)
 
 
 def update_feeds(max_feeds: int = 3, output: TextIO = stdout):
@@ -47,16 +126,33 @@ def update_feeds(max_feeds: int = 3, output: TextIO = stdout):
     :param output: A file-like object where logging messages will be written (default stdout).
     :type output: TextIO
     """
-    todo = Source.objects.filter(Q(due_poll__lt=timezone.now()) & Q(live=True))
+    database = router.db_for_write(Source)
+    now = timezone.now()
+    todo = (
+        Source.objects.using(database)
+        .filter(Q(due_poll__lt=now) & Q(live=True))
+        .filter(Q(poll_claim_token__isnull=True) | Q(poll_claim_expires__lte=now))
+    )
 
     output.write(f"\nQueue size is {todo.count()}")
 
-    sources = todo.order_by("due_poll")[:max_feeds]
-
-    output.write("\nProcessing %d" % sources.count())
-
-    for src in sources:
-        read_feed(src, output)
+    claimed = 0
+    attempted_source_ids = set()
+    while claimed < max_feeds:
+        src = _claim_next_due_source(
+            database, timezone.now(), exclude_ids=attempted_source_ids
+        )
+        if src is None:
+            break
+        attempted_source_ids.add(src.pk)
+        claimed += 1
+        output.write("\nProcessing 1 claimed source")
+        try:
+            read_feed(src, output)
+        except PollClaimLost:
+            output.write("\nPoll claim expired or was replaced")
+        finally:
+            _release_poll_claim(src)
 
 
 def _read_feed_resolve_url(source_feed: Source) -> str:
@@ -70,8 +166,14 @@ def _read_feed_resolve_url(source_feed: Source) -> str:
 
 
 def _read_feed_initial_get(
-    source_feed: Source, feed_url: str, headers: dict, output: TextIO
+    source_feed: Source,
+    feed_url: str,
+    headers: dict,
+    output: TextIO,
+    renew_claim=None,
 ) -> Optional[requests.Response]:
+    if renew_claim:
+        renew_claim()
     safe, failure_reason = validate_feed_request_target(feed_url)
     if not safe:
         source_feed.last_result = failure_reason
@@ -118,6 +220,7 @@ def _read_feed_follow_temporary_redirect(
     ret: requests.Response,
     output: TextIO,
     headers: dict,
+    renew_claim=None,
 ) -> requests.Response:
     new_url = ""
     current_url = ret.url or source_feed.feed_url
@@ -145,6 +248,8 @@ def _read_feed_follow_temporary_redirect(
             if not new_url:
                 new_url = resolved
             visited_urls.add(resolved)
+            if renew_claim:
+                renew_claim()
             ret = requests.get(
                 resolved,
                 headers=headers,
@@ -200,6 +305,7 @@ def _read_feed_process_http_response(
     ret: Optional[requests.Response],
     output: TextIO,
     headers: dict,
+    renew_claim=None,
 ) -> Tuple[Optional[requests.Response], bool]:
     """Apply status-code handling; return the response to use for body parsing and whether a 302 path ran."""
     was302 = False
@@ -266,7 +372,9 @@ def _read_feed_process_http_response(
         _read_feed_apply_permanent_redirect(source_feed, ret)
     elif ret.status_code == 302 or ret.status_code == 303 or ret.status_code == 307:
         was302 = True
-        ret = _read_feed_follow_temporary_redirect(source_feed, ret, output, headers)
+        ret = _read_feed_follow_temporary_redirect(
+            source_feed, ret, output, headers, renew_claim=renew_claim
+        )
 
     return ret, was302
 
@@ -346,26 +454,26 @@ def _read_feed_finalize_interval_and_save(
     )
     td = datetime.timedelta(minutes=source_feed.interval)
     source_feed.due_poll = timezone.now() + td
-    source_feed.save(
-        using=source_feed._state.db,
-        update_fields=[
-            "due_poll",
-            "interval",
-            "last_polled",
-            "last_result",
-            "last_modified",
-            "etag",
-            "last_302_start",
-            "last_302_url",
-            "last_success",
-            "live",
-            "status_code",
-            "max_index",
-            "is_cloudflare",
-            "last_change",
-            "alt_url",
-        ],
-    )
+    update_fields = [
+        "due_poll",
+        "interval",
+        "last_polled",
+        "last_result",
+        "last_modified",
+        "etag",
+        "last_302_start",
+        "last_302_url",
+        "last_success",
+        "live",
+        "status_code",
+        "max_index",
+        "is_cloudflare",
+        "last_change",
+        "alt_url",
+    ]
+    if getattr(source_feed, "_poll_claim_token", None) is not None:
+        update_fields.extend(["poll_claim_token", "poll_claim_expires"])
+    source_feed.save(using=source_feed._state.db, update_fields=update_fields)
 
 
 def read_feed(source_feed: Source, output: TextIO = stdout):
@@ -395,8 +503,16 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
 
     output.write("\nFetching %s" % feed_url)
 
-    ret = _read_feed_initial_get(source_feed, feed_url, headers, output)
-    ret, was302 = _read_feed_process_http_response(source_feed, ret, output, headers)
+    renew_claim = None
+    if getattr(source_feed, "_poll_claim_token", None) is not None:
+        renew_claim = lambda: _renew_poll_claim(source_feed)
+
+    ret = _read_feed_initial_get(
+        source_feed, feed_url, headers, output, renew_claim=renew_claim
+    )
+    ret, was302 = _read_feed_process_http_response(
+        source_feed, ret, output, headers, renew_claim=renew_claim
+    )
 
     pagination_pages = []
     pagination_result = None
@@ -410,16 +526,25 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
             content_type,
             output,
             normalized_feed=normalized_feed,
+            before_request=renew_claim,
         )
+
+    if renew_claim:
+        renew_claim()
 
     with transaction.atomic(using=database):
         source_feed._state.db = database
-        source_feed.max_index = (
-            Source.objects.using(database)
-            .select_for_update()
-            .values_list("max_index", flat=True)
-            .get(pk=source_feed.pk)
+        persisted_source = (
+            Source.objects.using(database).select_for_update().get(pk=source_feed.pk)
         )
+        claim_token = getattr(source_feed, "_poll_claim_token", None)
+        if claim_token is not None and (
+            persisted_source.poll_claim_token != claim_token
+            or persisted_source.poll_claim_expires is None
+            or persisted_source.poll_claim_expires <= timezone.now()
+        ):
+            raise PollClaimLost(f"Poll claim lost for source {source_feed.pk}")
+        source_feed.max_index = persisted_source.max_index
         if source_feed.feed_url != original_feed_url:
             source_feed.save(using=database, update_fields=["feed_url"])
         if ret and ret.status_code >= 200 and ret.status_code < 300:
@@ -433,6 +558,9 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
                 pagination_result,
             )
 
+        if claim_token is not None:
+            source_feed.poll_claim_token = None
+            source_feed.poll_claim_expires = None
         _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
 
 
