@@ -164,6 +164,7 @@ class TransactionalConcurrencyTests(TransactionTestCase):
         self.assertEqual({source_id for source_id, _ in processed}, sources)
         self.assertEqual(len(processed), 2)
         self.assertTrue(all(token is not None for _, token in processed))
+        self.assertEqual(len({token for _, token in processed}), 2)
         self.assertFalse(
             Source.objects.filter(pk__in=sources, poll_claim_token__isnull=False).exists()
         )
