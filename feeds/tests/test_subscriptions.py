@@ -4,7 +4,9 @@ import requests_mock
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db import connection
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from feeds.models import Post, Source, Subscription
@@ -694,6 +696,144 @@ class MalformedSubscriptionTraversalTest(BaseTest):
         self.assertEqual(
             get_unread_subscription_list_for_user(self.user),
             [valid_root],
+        )
+
+
+class BoundedSubscriptionWorkTest(BaseTest):
+    def test_large_folder_batches_unread_posts_and_preserves_tree_order(self):
+        user = User.objects.create_user(username="large-folder")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        sources = Source.objects.bulk_create([
+            Source(feed_url=feed_url_for(f"large-folder-{i}")) for i in range(1001)
+        ])
+        children = Subscription.objects.bulk_create([
+            Subscription(user=user, source=source, parent=root, last_read=i % 7 == 0)
+            for i, source in enumerate(sources)
+        ])
+        created = timezone.now()
+        posts = Post.objects.bulk_create([
+            Post(source=source, index=1, guid=f"large-folder-{i}", created=created)
+            for i, source in enumerate(sources)
+        ])
+        # The preloaded child is the authoritative instance, including unsaved edits.
+        children[0].last_read = 0
+        children[1].last_read = 1
+        gathered = []
+        with CaptureQueriesContext(connection) as queries:
+            root._gather_posts(gathered, {root.pk: children})
+
+        expected = [
+            (posts[i].pk, children[i]) for i in reversed(range(1001))
+            if children[i].last_read == 0
+        ]
+        self.assertEqual([post.pk for post in gathered], [pk for pk, _ in expected])
+        self.assertEqual(
+            [post.from_subscription for post in gathered],
+            [sub for _, sub in expected],
+        )
+        post_reads = [q for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 3)
+
+    def test_unsaved_last_read_is_used_for_direct_and_folder_posts(self):
+        user = User.objects.create_user(username="unsaved-last-read")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        source = Source.objects.create(feed_url=feed_url_for("unsaved-last-read"), max_index=2)
+        sub = Subscription.objects.create(user=user, source=source, parent=root, last_read=0)
+        posts = [Post.objects.create(
+            source=source, index=index, guid=f"unsaved-{index}",
+            title=f"Post {index}", created=timezone.now() + timedelta(minutes=index),
+        ) for index in (1, 2)]
+
+        sub.last_read = 1
+        self.assertEqual([post.pk for post in sub.get_unread_posts()], [posts[1].pk])
+        self.assertEqual(sub.unread_count, 1)
+
+        # The helper also accepts a preloaded tree whose child has an unsaved marker.
+        gathered = []
+        with CaptureQueriesContext(connection) as queries:
+            root._gather_posts(gathered, {root.pk: [sub]})
+        self.assertEqual([post.pk for post in gathered], [posts[1].pk])
+        self.assertIs(gathered[0].from_subscription, sub)
+        post_reads = [q for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 1)
+
+    def test_equal_created_dates_keep_tree_order(self):
+        user = User.objects.create_user(username="tied-posts")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        posts = []
+        created = timezone.now()
+        for i in range(2):
+            source = Source.objects.create(feed_url=feed_url_for(f"tied-{i}"))
+            Subscription.objects.create(user=user, source=source, parent=root, name=f"Feed {i}")
+            posts.append(Post.objects.create(
+                source=source, index=1, guid=f"tie-{i}",
+                title=f"Post {i}", created=created,
+            ))
+
+        self.assertEqual(root.get_unread_posts(), list(reversed(posts)))
+        self.assertEqual(root.get_unread_posts(oldest_first=False), list(reversed(posts)))
+
+    def test_descendant_unread_posts_use_one_post_query_and_keep_annotations(self):
+        user = User.objects.create_user(username="bounded-posts")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        nested = Subscription.objects.create(user=user, source=None, name="Nested", parent=root)
+        expected = []
+        for i in range(12):
+            source = Source.objects.create(feed_url=feed_url_for(f"bounded-{i}"), max_index=2)
+            sub = Subscription.objects.create(
+                user=user, source=source, parent=nested if i % 2 else root,
+                name=f"Feed {i}", last_read=1,
+            )
+            Post.objects.create(
+                source=source, index=1, guid=f"read-{i}", title="Read",
+                created=timezone.now() - timedelta(days=3),
+            )
+            post = Post.objects.create(
+                source=source, index=2, guid=f"unread-{i}", title=f"Unread {i}",
+                created=timezone.now() + timedelta(minutes=i),
+            )
+            expected.append((post, sub))
+
+        with CaptureQueriesContext(connection) as queries:
+            oldest = root.get_unread_posts()
+        post_reads = [q for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 1)
+        self.assertEqual([p.pk for p in oldest], [p.pk for p, _ in expected])
+        self.assertEqual(
+            [p.from_subscription.pk for p in oldest],
+            [sub.pk for _, sub in expected],
+        )
+        self.assertEqual(
+            [p.pk for p in root.get_unread_posts(oldest_first=False)],
+            [p.pk for p, _ in reversed(expected)],
+        )
+
+        page, paginator = root.get_paginated_posts(2, posts_per_page=5)
+        self.assertEqual(paginator.count, 24)
+        self.assertEqual(len(page), 5)
+        self.assertTrue(all(p.subscription.source_id == p.source_id for p in page))
+
+    def test_deep_folder_counts_use_one_subscription_query(self):
+        user = User.objects.create_user(username="bounded-folders")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        parent = root
+        for i in range(35):
+            parent = Subscription.objects.create(
+                user=user, source=None, name=f"Level {i}", parent=parent,
+            )
+        source = Source.objects.create(feed_url=feed_url_for("deep-bounded"), max_index=3)
+        Subscription.objects.create(user=user, source=source, name="Feed", parent=parent)
+
+        with CaptureQueriesContext(connection) as queries:
+            roots = get_unread_subscription_list_for_user(user)
+        self.assertEqual(roots, [root])
+        self.assertEqual(roots[0].unread_count, 3)
+        self.assertEqual(
+            len([q for q in queries if 'FROM "feeds_subscription"' in q["sql"]
+                 and q["sql"].lstrip().startswith("SELECT")]), 1,
         )
 
 

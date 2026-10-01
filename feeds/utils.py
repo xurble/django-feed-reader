@@ -670,49 +670,38 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
         .order_by("-is_river", "name")
     )
 
-    subs_list = []
-    groups = {}
-
+    roots = []
+    children = {}
     for sub in to_read:
-        if sub.source is None:
-            # This is a group add it to the group list for later
-            groups[sub.id] = sub
+        if sub.source_id is None:
             sub._unread_count = 0
         if sub.parent_id is None:
-            subs_list.append(sub)
+            roots.append(sub)
+        else:
+            children.setdefault(sub.parent_id, []).append(sub)
 
-    for sub in to_read:
-        if sub.parent_id:
-            # This is inside a group, all we do is add its count to the group it is in (assuming its not a group)
-            if sub.parent_id in groups and sub.source_id is not None:
-                grp = groups[sub.parent_id]
-                grp._unread_count += sub.unread_count
+    # Each reachable subscription is visited once. Disconnected legacy cycles
+    # and children of malformed non-folder parents cannot affect a root count.
+    seen = set()
+    for root in roots:
+        stack = [(root, False)]
+        while stack:
+            sub, expanded = stack.pop()
+            if expanded:
+                if sub.source_id is None:
+                    sub._unread_count = sum(
+                        child.unread_count for child in children.get(sub.pk, [])
+                        if child.pk in seen
+                    )
+                continue
+            if sub.pk in seen:
+                continue
+            seen.add(sub.pk)
+            stack.append((sub, True))
+            if sub.source_id is None:
+                stack.extend(
+                    (child, False) for child in children.get(sub.pk, [])
+                    if child.pk not in seen
+                )
 
-    while len(groups.keys()) > 0:
-        made_progress = False
-        for key in list(groups.keys()):
-            folder = groups[key]
-            found = False
-            for kk in list(groups.keys()):
-                vv = groups[kk]
-                if vv.parent_id == folder.id:
-                    # then this folder has subfolders still inside the
-                    # dictionary
-                    found = True
-                    break
-            if not found:
-                # This folder does not have any children
-                if folder.parent_id is not None:
-                    parent = groups.get(folder.parent_id)
-                    if parent is not None:
-                        parent._unread_count += folder._unread_count
-                groups.pop(folder.id)
-                made_progress = True
-        if not made_progress:
-            # Malformed legacy parent cycles have no leaf to reduce. They are not
-            # root subscriptions, so leave them out rather than looping forever.
-            break
-
-    return [
-        s for s in subs_list if s.unread_count > 0 or s.is_river
-    ]  # Filter out folders with no undread items
+    return [sub for sub in roots if sub.unread_count > 0 or sub.is_river]

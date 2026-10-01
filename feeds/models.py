@@ -659,16 +659,26 @@ class Subscription(models.Model):
         if children_by_parent is None:
             children_by_parent = _subscription_children_by_parent(self.user_id)
 
-        for sub in self._tree_members(children_by_parent):
-            if sub.source:
-                posts = list(
-                    Post.objects.filter(
-                        Q(source=sub.source) & Q(index__gt=sub.last_read)
-                    )
-                )
-                for post in posts:
-                    post.from_subscription = sub
-                    post_list.append(post)
+        subscriptions = [
+            sub for sub in self._tree_members(children_by_parent) if sub.source_id
+        ]
+        if not subscriptions:
+            return
+
+        by_source = defaultdict(list)
+        # Keep the OR expression below SQLite's expression-depth limit.
+        for start in range(0, len(subscriptions), 400):
+            unread_filter = Q()
+            for sub in subscriptions[start : start + 400]:
+                unread_filter |= Q(source_id=sub.source_id, index__gt=sub.last_read)
+            for post in Post.objects.filter(unread_filter).order_by("source_id", "index"):
+                by_source[post.source_id].append(post)
+
+        # Preserve the previous stable tie order: tree order, then post index.
+        for sub in subscriptions:
+            for post in by_source[sub.source_id]:
+                post.from_subscription = sub
+                post_list.append(post)
 
     def get_unread_posts(self, oldest_first=True):
         """Returns all the unread posts in a subscription"""
