@@ -2,12 +2,14 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from io import StringIO
 from threading import Barrier, Event, Lock
 from unittest import skipIf
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection
+from django.db.models.functions import Greatest
 from django.db.models.query import QuerySet
 from django.test import TransactionTestCase
 from django.utils import timezone
@@ -97,6 +99,34 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             yield
         self.assertEqual(coordinated_calls, 2)
 
+    @contextmanager
+    def _coordinate_mark_read_update(self, model):
+        """Commit the newer marker just before mark_read executes its UPDATE."""
+        original_update = QuerySet.update
+        mark_read_ready = Event()
+        newer_marker_committed = Event()
+        calls = {"mark_read": 0, "newer_marker": 0}
+
+        def coordinated_update(queryset, **kwargs):
+            value = kwargs.get("last_read")
+            if queryset.model is model and isinstance(value, Greatest):
+                calls["mark_read"] += 1
+                mark_read_ready.set()
+                if not newer_marker_committed.wait(timeout=10):
+                    raise AssertionError("newer marker was not committed")
+            elif queryset.model is model and type(value) is int and value == 12:
+                calls["newer_marker"] += 1
+                if not mark_read_ready.wait(timeout=10):
+                    raise AssertionError("mark_read did not reach its UPDATE")
+                result = original_update(queryset, **kwargs)
+                newer_marker_committed.set()
+                return result
+            return original_update(queryset, **kwargs)
+
+        with patch.object(QuerySet, "update", coordinated_update):
+            yield
+        self.assertEqual(calls, {"mark_read": 1, "newer_marker": 1})
+
     def test_workers_contending_for_one_source_get_one_claim(self):
         source = Source.objects.create(feed_url="http://claim.example.com/feed")
 
@@ -116,13 +146,30 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             for i in range(2)
         }
 
-        def claim():
-            claimed = utils._claim_next_due_source("default", timezone.now())
-            return claimed.pk if claimed else None
+        processing_barrier = Barrier(2)
+        processed = []
+        processed_lock = Lock()
 
-        results = self._run_together(claim, claim)
+        def read_feed(source, output):
+            with processed_lock:
+                processed.append((source.pk, source._poll_claim_token))
+            processing_barrier.wait(timeout=10)
 
-        self.assertEqual(set(results), sources)
+        with patch.object(utils, "read_feed", side_effect=read_feed):
+            self._run_together(
+                lambda: utils.update_feeds(max_feeds=1, output=StringIO()),
+                lambda: utils.update_feeds(max_feeds=1, output=StringIO()),
+            )
+
+        self.assertEqual({source_id for source_id, _ in processed}, sources)
+        self.assertEqual(len(processed), 2)
+        self.assertTrue(all(token is not None for _, token in processed))
+        self.assertFalse(
+            Source.objects.filter(pk__in=sources, poll_claim_token__isnull=False).exists()
+        )
+        self.assertFalse(
+            Source.objects.filter(pk__in=sources, poll_claim_expires__isnull=False).exists()
+        )
 
     def test_concurrent_automatic_post_indexes_are_unique_and_ordered(self):
         source = Source.objects.create(feed_url="http://posts.example.com/feed")
@@ -151,10 +198,11 @@ class TransactionalConcurrencyTests(TransactionTestCase):
             feed_url="http://source-marker.example.com/feed", max_index=10
         )
 
-        self._run_together(
-            lambda: Source.objects.get(pk=source.pk).mark_read(),
-            lambda: Source.objects.filter(pk=source.pk).update(last_read=12),
-        )
+        with self._coordinate_mark_read_update(Source):
+            self._run_together(
+                lambda: Source.objects.get(pk=source.pk).mark_read(),
+                lambda: Source.objects.filter(pk=source.pk).update(last_read=12),
+            )
 
         source.refresh_from_db()
         self.assertEqual(source.last_read, 12)
@@ -166,12 +214,13 @@ class TransactionalConcurrencyTests(TransactionTestCase):
         user = User.objects.create_user("marker")
         subscription = Subscription.objects.create(user=user, source=source)
 
-        self._run_together(
-            lambda: Subscription.objects.get(pk=subscription.pk).mark_read(),
-            lambda: Subscription.objects.filter(pk=subscription.pk).update(
-                last_read=12
-            ),
-        )
+        with self._coordinate_mark_read_update(Subscription):
+            self._run_together(
+                lambda: Subscription.objects.get(pk=subscription.pk).mark_read(),
+                lambda: Subscription.objects.filter(pk=subscription.pk).update(
+                    last_read=12
+                ),
+            )
 
         subscription.refresh_from_db()
         self.assertEqual(subscription.last_read, 12)
