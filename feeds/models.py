@@ -665,13 +665,14 @@ class Subscription(models.Model):
         if not subscriptions:
             return
 
-        unread_filter = Q()
-        for sub in subscriptions:
-            unread_filter |= Q(source_id=sub.source_id, index__gt=sub.last_read)
-
         by_source = defaultdict(list)
-        for post in Post.objects.filter(unread_filter).order_by("source_id", "index"):
-            by_source[post.source_id].append(post)
+        # Keep the OR expression below SQLite's expression-depth limit.
+        for start in range(0, len(subscriptions), 400):
+            unread_filter = Q()
+            for sub in subscriptions[start : start + 400]:
+                unread_filter |= Q(source_id=sub.source_id, index__gt=sub.last_read)
+            for post in Post.objects.filter(unread_filter).order_by("source_id", "index"):
+                by_source[post.source_id].append(post)
 
         # Preserve the previous stable tie order: tree order, then post index.
         for sub in subscriptions:

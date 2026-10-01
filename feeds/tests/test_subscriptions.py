@@ -700,6 +700,41 @@ class MalformedSubscriptionTraversalTest(BaseTest):
 
 
 class BoundedSubscriptionWorkTest(BaseTest):
+    def test_large_folder_batches_unread_posts_and_preserves_tree_order(self):
+        user = User.objects.create_user(username="large-folder")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        sources = Source.objects.bulk_create([
+            Source(feed_url=feed_url_for(f"large-folder-{i}")) for i in range(1001)
+        ])
+        children = Subscription.objects.bulk_create([
+            Subscription(user=user, source=source, parent=root, last_read=i % 7 == 0)
+            for i, source in enumerate(sources)
+        ])
+        created = timezone.now()
+        posts = Post.objects.bulk_create([
+            Post(source=source, index=1, guid=f"large-folder-{i}", created=created)
+            for i, source in enumerate(sources)
+        ])
+        # The preloaded child is the authoritative instance, including unsaved edits.
+        children[0].last_read = 0
+        children[1].last_read = 1
+        gathered = []
+        with CaptureQueriesContext(connection) as queries:
+            root._gather_posts(gathered, {root.pk: children})
+
+        expected = [
+            (posts[i].pk, children[i]) for i in reversed(range(1001))
+            if children[i].last_read == 0
+        ]
+        self.assertEqual([post.pk for post in gathered], [pk for pk, _ in expected])
+        self.assertEqual(
+            [post.from_subscription for post in gathered],
+            [sub for _, sub in expected],
+        )
+        post_reads = [q for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 3)
+
     def test_unsaved_last_read_is_used_for_direct_and_folder_posts(self):
         user = User.objects.create_user(username="unsaved-last-read")
         root = Subscription.objects.create(user=user, source=None, name="Root")
