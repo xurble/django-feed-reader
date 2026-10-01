@@ -665,11 +665,12 @@ class Subscription(models.Model):
         if not subscriptions:
             return
 
+        unread_filter = Q()
+        for sub in subscriptions:
+            unread_filter |= Q(source_id=sub.source_id, index__gt=sub.last_read)
+
         by_source = defaultdict(list)
-        for post in Post.objects.filter(
-            source__subscriptions__pk__in=[sub.pk for sub in subscriptions],
-            index__gt=F("source__subscriptions__last_read"),
-        ).order_by("source_id", "index"):
+        for post in Post.objects.filter(unread_filter).order_by("source_id", "index"):
             by_source[post.source_id].append(post)
 
         # Preserve the previous stable tie order: tree order, then post index.

@@ -11,7 +11,7 @@ import feedparser as parser
 import pyrfc3339
 import requests
 from django.conf import settings
-from django.db.models import Prefetch
+from django.db.models import Prefetch, prefetch_related_objects
 from django.utils import timezone
 
 from feeds.models import Enclosure, Post, Source
@@ -250,16 +250,29 @@ def _posts_by_guid_lookup(source_feed: Source, guids) -> dict:
     """Load only incoming posts and their enclosures for synchronization."""
     if not guids:
         return {}
-    posts_by_guid = {}
-    for p in (
-        Post.objects.using(source_feed._state.db)
-        .filter(source=source_feed, guid__in=guids)
-        .prefetch_related(
-            Prefetch(
-                "enclosures", queryset=Enclosure.objects.using(source_feed._state.db)
+    database = source_feed._state.db
+    digests = {hashlib.sha256(guid.encode("utf-8")).hexdigest() for guid in guids}
+    candidates = list(
+        Post.objects.using(database).filter(
+            source=source_feed, guid_digest__in=digests
+        )
+    )
+    matched_guids = {post.guid for post in candidates if post.guid in guids}
+    missing_guids = guids - matched_guids
+    if missing_guids:
+        # bulk_create, update, and raw SQL can leave a null or stale digest.
+        candidates.extend(
+            Post.objects.using(database).filter(
+                source=source_feed, guid__in=missing_guids
             )
         )
-    ):
+    posts_by_guid = {}
+    matched = [post for post in candidates if post.guid in guids]
+    prefetch_related_objects(
+        matched,
+        Prefetch("enclosures", queryset=Enclosure.objects.using(database)),
+    )
+    for p in matched:
         if p.guid is not None:
             posts_by_guid[p.guid] = p
     return posts_by_guid

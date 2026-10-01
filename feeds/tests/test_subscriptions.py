@@ -700,6 +700,30 @@ class MalformedSubscriptionTraversalTest(BaseTest):
 
 
 class BoundedSubscriptionWorkTest(BaseTest):
+    def test_unsaved_last_read_is_used_for_direct_and_folder_posts(self):
+        user = User.objects.create_user(username="unsaved-last-read")
+        root = Subscription.objects.create(user=user, source=None, name="Root")
+        source = Source.objects.create(feed_url=feed_url_for("unsaved-last-read"), max_index=2)
+        sub = Subscription.objects.create(user=user, source=source, parent=root, last_read=0)
+        posts = [Post.objects.create(
+            source=source, index=index, guid=f"unsaved-{index}",
+            title=f"Post {index}", created=timezone.now() + timedelta(minutes=index),
+        ) for index in (1, 2)]
+
+        sub.last_read = 1
+        self.assertEqual([post.pk for post in sub.get_unread_posts()], [posts[1].pk])
+        self.assertEqual(sub.unread_count, 1)
+
+        # The helper also accepts a preloaded tree whose child has an unsaved marker.
+        gathered = []
+        with CaptureQueriesContext(connection) as queries:
+            root._gather_posts(gathered, {root.pk: [sub]})
+        self.assertEqual([post.pk for post in gathered], [posts[1].pk])
+        self.assertIs(gathered[0].from_subscription, sub)
+        post_reads = [q for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 1)
+
     def test_equal_created_dates_keep_tree_order(self):
         user = User.objects.create_user(username="tied-posts")
         root = Subscription.objects.create(user=user, source=None, name="Root")

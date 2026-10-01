@@ -91,9 +91,9 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual((ok, changed), (True, True))
         post_reads = [q["sql"] for q in queries if
                       'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
-        self.assertEqual(len(post_reads), 2)  # initial-import probe and matched GUID lookup
+        self.assertEqual(len(post_reads), 3)  # initial probe, indexed match, new GUID fallback
+        self.assertIn('"guid_digest" IN', post_reads[-2])
         self.assertIn('"guid" IN', post_reads[-1])
-        self.assertNotIn("unrelated-history", post_reads[-1])
         enclosure_reads = [q["sql"] for q in queries if
                            'FROM "feeds_enclosure"' in q["sql"] and '"post_id" IN' in q["sql"]
                            and q["sql"].lstrip().startswith("SELECT")]

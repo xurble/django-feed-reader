@@ -1,3 +1,4 @@
+import hashlib
 import json
 from importlib import reload
 
@@ -16,6 +17,59 @@ from .base import BASE_URL, BaseTest, NullOutput
 
 @requests_mock.Mocker()
 class JSONFeedTest(BaseTest):
+    def test_guid_lookup_uses_digest_index_without_loading_history(self, mock):
+        src = Source.objects.create(feed_url=BASE_URL)
+        matched = Post.objects.create(
+            source=src, index=1, guid="known", title="Known", created=timezone.now()
+        )
+        Post.objects.bulk_create([
+            Post(source=src, index=i + 2, guid=f"history-{i}", created=timezone.now())
+            for i in range(100)
+        ])
+
+        with CaptureQueriesContext(connection) as queries:
+            found = utils_internal._posts_by_guid_lookup(src, {"known"})
+
+        self.assertEqual(list(found), ["known"])
+        self.assertEqual(found["known"].pk, matched.pk)
+        post_reads = [q["sql"] for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 1)
+        self.assertIn('"guid_digest" IN', post_reads[0])
+        self.assertNotIn('"guid" IN', post_reads[0])
+        if connection.vendor == "sqlite":
+            plan = Post.objects.filter(
+                source=src, guid_digest=matched.guid_digest
+            ).explain()
+            self.assertIn("source_id=? AND guid_digest=?", plan)
+
+    def test_guid_lookup_recovers_missing_and_stale_digests(self, mock):
+        src = Source.objects.create(feed_url=BASE_URL)
+        missing = Post.objects.bulk_create([
+            Post(source=src, index=1, guid="missing", created=timezone.now())
+        ])[0]
+        stale = Post.objects.create(
+            source=src, index=2, guid="stale", created=timezone.now()
+        )
+        Post.objects.filter(pk=stale.pk).update(guid_digest="0" * 64)
+
+        found = utils_internal._posts_by_guid_lookup(src, {"missing", "stale"})
+
+        self.assertEqual({guid: post.pk for guid, post in found.items()}, {
+            "missing": missing.pk, "stale": stale.pk,
+        })
+
+    def test_guid_lookup_rejects_mismatched_digest_candidate(self, mock):
+        src = Source.objects.create(feed_url=BASE_URL)
+        post = Post.objects.create(
+            source=src, index=1, guid="different", created=timezone.now()
+        )
+        Post.objects.filter(pk=post.pk).update(
+            guid_digest=hashlib.sha256(b"target").hexdigest()
+        )
+
+        self.assertEqual(utils_internal._posts_by_guid_lookup(src, {"target"}), {})
+
     def test_duplicate_new_guid_reloads_enclosures_for_later_entry(self, mock):
         src = Source.objects.create(feed_url=BASE_URL)
         feed = {"title": "Feed", "items": [
@@ -60,9 +114,9 @@ class JSONFeedTest(BaseTest):
         self.assertEqual((ok, changed), (True, True))
         post_reads = [q["sql"] for q in queries if
                       'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
-        self.assertEqual(len(post_reads), 1)
-        self.assertIn('"guid" IN', post_reads[0])
-        self.assertNotIn("unrelated-history", post_reads[0])
+        self.assertEqual(len(post_reads), 2)
+        self.assertIn('"guid_digest" IN', post_reads[0])
+        self.assertIn('"guid" IN', post_reads[1])
         enclosure_reads = [q["sql"] for q in queries if
                            'FROM "feeds_enclosure"' in q["sql"] and '"post_id" IN' in q["sql"]
                            and q["sql"].lstrip().startswith("SELECT")]
