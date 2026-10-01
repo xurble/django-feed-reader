@@ -246,12 +246,14 @@ def fetch_feed_pagination(
     return pages, pagination_result
 
 
-def _posts_by_guid_lookup(source_feed: Source) -> dict:
-    """Load posts for this source keyed by guid (one query + enclosure prefetch)."""
+def _posts_by_guid_lookup(source_feed: Source, guids) -> dict:
+    """Load only incoming posts and their enclosures for synchronization."""
+    if not guids:
+        return {}
     posts_by_guid = {}
     for p in (
         Post.objects.using(source_feed._state.db)
-        .filter(source=source_feed)
+        .filter(source=source_feed, guid__in=guids)
         .prefetch_related(
             Prefetch(
                 "enclosures", queryset=Enclosure.objects.using(source_feed._state.db)
@@ -665,7 +667,7 @@ def parse_feed_xml(
 
         # output.write(entries)
         entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
-        posts_by_guid = _posts_by_guid_lookup(source_feed)
+        prepared_entries = []
         for e in entries:
             # we are going to take the longest
             body = ""
@@ -698,7 +700,13 @@ def parse_feed_xml(
             e_guid = getattr(e, "guid", None)
             e_link = getattr(e, "link", None)
             guid = make_guid(e_guid, e_link, body)
+            prepared_entries.append((e, body, guid))
+        posts_by_guid = _posts_by_guid_lookup(
+            source_feed, {guid for _, _, guid in prepared_entries}
+        )
+        for e, body, guid in prepared_entries:
             p = posts_by_guid.get(guid)
+            is_new = p is None
             if p is not None:
                 output.write("\nEXISTING " + guid)
             else:
@@ -753,12 +761,16 @@ def parse_feed_xml(
                 output.write(p.body)
 
             p.save(using=source_feed._state.db)
+            if is_new:
+                p._prefetched_objects_cache = {"enclosures": []}
             posts_by_guid[guid] = p
 
             try:
                 _batch_sync_enclosures_xml(p, e)
             except Exception as ex:
                 output.write("\nNo enclosures - " + str(ex))
+            if is_new:
+                p._prefetched_objects_cache.pop("enclosures", None)
 
         if SAVE_JSON:
             # Kill the entries
@@ -851,7 +863,7 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
 
         # output.write(entries)
         entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
-        posts_by_guid = _posts_by_guid_lookup(source_feed)
+        prepared_entries = []
         for e in entries:
             body = " "
             if "content_text" in e:
@@ -864,8 +876,14 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
             e_id = e.get("id", None)
             e_url = e.get("url", None)
             guid = make_guid(e_id, e_url, body)
+            prepared_entries.append((e, body, guid))
+        posts_by_guid = _posts_by_guid_lookup(
+            source_feed, {guid for _, _, guid in prepared_entries}
+        )
+        for e, body, guid in prepared_entries:
 
             p = posts_by_guid.get(guid)
+            is_new = p is None
             if p is not None:
                 output.write("\nEXISTING " + guid)
             else:
@@ -927,12 +945,16 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
                 output.write(p.body)
 
             p.save(using=source_feed._state.db)
+            if is_new:
+                p._prefetched_objects_cache = {"enclosures": []}
             posts_by_guid[guid] = p
 
             try:
                 _batch_sync_enclosures_json(p, e)
             except Exception as ex:
                 output.write("\nNo enclosures - " + str(ex))
+            if is_new:
+                p._prefetched_objects_cache.pop("enclosures", None)
 
         if SAVE_JSON:
             f["items"] = []

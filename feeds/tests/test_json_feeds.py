@@ -1,11 +1,14 @@
+import json
 from importlib import reload
 
 import requests_mock
 from django.conf import settings
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from feeds import utils, utils_internal
-from feeds.models import Source
+from feeds.models import Enclosure, Post, Source
 from feeds.utils import read_feed
 
 from .base import BASE_URL, BaseTest, NullOutput
@@ -13,6 +16,60 @@ from .base import BASE_URL, BaseTest, NullOutput
 
 @requests_mock.Mocker()
 class JSONFeedTest(BaseTest):
+    def test_duplicate_new_guid_reloads_enclosures_for_later_entry(self, mock):
+        src = Source.objects.create(feed_url=BASE_URL)
+        feed = {"title": "Feed", "items": [
+            {"id": "duplicate", "attachments": [{"url": "http://feed.com/b"}]},
+            {"id": "duplicate", "attachments": [{"url": "http://feed.com/a"}]},
+        ]}
+
+        self.assertEqual(
+            utils_internal.parse_feed_json(src, json.dumps(feed), NullOutput()),
+            (True, True),
+        )
+        self.assertEqual(
+            list(src.posts.get().current_enclosures.values_list("href", flat=True)),
+            ["http://feed.com/b"],
+        )
+
+    def test_refresh_loads_only_incoming_posts_and_enclosures(self, mock):
+        src = Source.objects.create(feed_url=BASE_URL)
+        matched = Post.objects.create(
+            source=src, index=1, guid="known", title="Old",
+            body="", created=timezone.now(),
+        )
+        unrelated = Post.objects.create(
+            source=src, index=2, guid="unrelated-history", title="Old",
+            body="", created=timezone.now(),
+        )
+        for post in (matched, unrelated):
+            Enclosure.objects.create(post=post, href=f"http://feed.com/{post.pk}", type="audio/mpeg")
+        Post.objects.bulk_create([
+            Post(source=src, index=i + 3, guid=f"historical-{i}",
+                 title="Historical", body="", created=timezone.now())
+            for i in range(40)
+        ])
+        feed = {"title": "Feed", "home_page_url": BASE_URL, "items": [
+            {"id": "known", "title": "Known", "content_text": "Known"},
+            {"id": "new", "title": "New", "content_text": "New"},
+        ]}
+
+        with CaptureQueriesContext(connection) as queries:
+            ok, changed = utils_internal.parse_feed_json(src, json.dumps(feed), NullOutput())
+
+        self.assertEqual((ok, changed), (True, True))
+        post_reads = [q["sql"] for q in queries if
+                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(post_reads), 1)
+        self.assertIn('"guid" IN', post_reads[0])
+        self.assertNotIn("unrelated-history", post_reads[0])
+        enclosure_reads = [q["sql"] for q in queries if
+                           'FROM "feeds_enclosure"' in q["sql"] and '"post_id" IN' in q["sql"]
+                           and q["sql"].lstrip().startswith("SELECT")]
+        self.assertEqual(len(enclosure_reads), 1)
+        self.assertIn(f'"post_id" IN ({matched.pk})', enclosure_reads[0])
+        self.assertEqual(src.posts.count(), 43)
+
     def test_simple_json(self, mock):
 
         self._populate_mock(
