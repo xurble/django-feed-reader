@@ -3,6 +3,7 @@ from datetime import timedelta
 import requests_mock
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.test import override_settings
 from django.utils import timezone
 
@@ -505,9 +506,7 @@ class SubscriptionParentValidationTest(BaseTest):
         self.other_user = User.objects.create_user(username="other-owner")
 
     def test_subscription_cannot_be_its_own_parent(self):
-        folder = Subscription.objects.create(
-            user=self.user, source=None, name="Folder"
-        )
+        folder = Subscription.objects.create(user=self.user, source=None, name="Folder")
 
         folder.parent = folder
 
@@ -515,9 +514,7 @@ class SubscriptionParentValidationTest(BaseTest):
             folder.save()
 
     def test_subscription_parent_cannot_create_ancestor_cycle(self):
-        parent = Subscription.objects.create(
-            user=self.user, source=None, name="Parent"
-        )
+        parent = Subscription.objects.create(user=self.user, source=None, name="Parent")
         child = Subscription.objects.create(
             user=self.user, source=None, name="Child", parent=parent
         )
@@ -561,9 +558,7 @@ class SubscriptionParentValidationTest(BaseTest):
             name="Replacement feed",
             feed_url=feed_url_for("folder-changed-to-feed"),
         )
-        parent = Subscription.objects.create(
-            user=self.user, source=None, name="Parent"
-        )
+        parent = Subscription.objects.create(user=self.user, source=None, name="Parent")
         Subscription.objects.create(
             user=self.user, source=None, name="Child", parent=parent
         )
@@ -574,9 +569,7 @@ class SubscriptionParentValidationTest(BaseTest):
             parent.save(update_fields=["source"])
 
     def test_parent_folder_cannot_be_changed_to_another_user(self):
-        parent = Subscription.objects.create(
-            user=self.user, source=None, name="Parent"
-        )
+        parent = Subscription.objects.create(user=self.user, source=None, name="Parent")
         Subscription.objects.create(
             user=self.user, source=None, name="Child", parent=parent
         )
@@ -592,9 +585,7 @@ class SubscriptionParentValidationTest(BaseTest):
             feed_url=feed_url_for("valid-nested-tree"),
             max_index=1,
         )
-        root = Subscription.objects.create(
-            user=self.user, source=None, name="Root"
-        )
+        root = Subscription.objects.create(user=self.user, source=None, name="Root")
         child = Subscription.objects.create(
             user=self.user, source=None, name="Child", parent=root
         )
@@ -623,9 +614,7 @@ class MalformedSubscriptionTraversalTest(BaseTest):
             created=timezone.now(),
             index=None,
         )
-        first = Subscription.objects.create(
-            user=self.user, source=None, name="First"
-        )
+        first = Subscription.objects.create(user=self.user, source=None, name="First")
         second = Subscription.objects.create(
             user=self.user, source=None, name="Second", parent=first
         )
@@ -778,6 +767,116 @@ class SubscriptionSaveCompatibilityTest(BaseTest):
         self.assertEqual(subscription.name, "After")
 
 
+class MonotonicReadMarkerTest(BaseTest):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user("marker-user")
+        self.source = Source.objects.create(
+            name="Original", feed_url="http://marker.example.com/feed", max_index=3
+        )
+
+    def test_source_mark_read_uses_database_state_and_only_updates_marker(self):
+        stale = Source.objects.get(pk=self.source.pk)
+        Source.objects.filter(pk=self.source.pk).update(max_index=9, name="Concurrent")
+
+        stale.mark_read()
+
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.last_read, 9)
+        self.assertEqual(self.source.name, "Concurrent")
+
+    def test_source_mark_read_never_moves_marker_backwards(self):
+        Source.objects.filter(pk=self.source.pk).update(max_index=3, last_read=7)
+
+        self.source.mark_read()
+
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.last_read, 7)
+
+    def test_subscription_mark_read_uses_persisted_source_and_is_narrow(self):
+        subscription = Subscription.objects.create(
+            user=self.user, source=self.source, name="Original"
+        )
+        Source.objects.filter(pk=self.source.pk).update(max_index=11)
+        Subscription.objects.filter(pk=subscription.pk).update(name="Concurrent")
+
+        subscription.mark_read()
+
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.last_read, 11)
+        self.assertEqual(subscription.name, "Concurrent")
+
+    def test_subscription_mark_read_never_moves_marker_backwards(self):
+        subscription = Subscription.objects.create(
+            user=self.user, source=self.source, name="Feed", last_read=8
+        )
+
+        subscription.mark_read()
+
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.last_read, 8)
+
+    def test_folder_mark_read_applies_monotonic_rule_to_each_descendant(self):
+        newer_source = Source.objects.create(
+            feed_url="http://newer-marker.example.com/feed", max_index=10
+        )
+        folder = Subscription.objects.create(user=self.user, source=None, name="Folder")
+        ahead = Subscription.objects.create(
+            user=self.user,
+            source=self.source,
+            parent=folder,
+            name="Ahead",
+            last_read=8,
+        )
+        behind = Subscription.objects.create(
+            user=self.user,
+            source=newer_source,
+            parent=folder,
+            name="Behind",
+            last_read=1,
+        )
+
+        folder.mark_read()
+
+        ahead.refresh_from_db()
+        behind.refresh_from_db()
+        self.assertEqual(ahead.last_read, 8)
+        self.assertEqual(behind.last_read, 10)
+
+
+class NonDefaultDatabaseStateUpdateTest(BaseTest):
+    databases = {"default", "other"}
+
+    def test_index_markers_and_counts_stay_on_instance_database(self):
+        user = User.objects.using("other").create(username="other-user")
+        source = Source.objects.using("other").create(
+            feed_url="http://other.example.com/feed", max_index=4
+        )
+
+        post = Post.objects.using("other").create(
+            source_id=source.pk,
+            title="Other",
+            body="body",
+            created=timezone.now(),
+            index=None,
+        )
+        source.mark_read()
+        subscription = Subscription.objects.using("other").create(
+            user=user, source=source, name="Other"
+        )
+        subscription.mark_read()
+
+        source.refresh_from_db(using="other")
+        subscription.refresh_from_db(using="other")
+        self.assertEqual(post.index, 5)
+        self.assertEqual(source.max_index, 5)
+        self.assertEqual(source.last_read, 5)
+        self.assertEqual(source.num_subs, 1)
+        self.assertEqual(subscription.last_read, 5)
+        self.assertFalse(Post.objects.using("default").exists())
+        self.assertFalse(Subscription.objects.using("default").exists())
+
+
 class SubscriberCountTest(BaseTest):
     """Regression tests for num_subs recalculation when subscriptions change source."""
 
@@ -840,6 +939,20 @@ class SubscriberCountTest(BaseTest):
         self.source_a.refresh_from_db()
         self.assertEqual(self.source_a.num_subs, 1)
 
+    def test_partial_save_does_not_treat_unwritten_source_as_a_move(self):
+        sub = Subscription.objects.create(user=self.user, source=self.source_a)
+        sub.source = self.source_b
+        sub.name = "Renamed"
+
+        sub.save(update_fields=["name"])
+
+        sub.refresh_from_db()
+        self.source_a.refresh_from_db()
+        self.source_b.refresh_from_db()
+        self.assertEqual(sub.source_id, self.source_a.pk)
+        self.assertEqual(self.source_a.num_subs, 1)
+        self.assertEqual(self.source_b.num_subs, 1)
+
     def test_delete_updates_source(self):
         sub = Subscription.objects.create(user=self.user, source=self.source_a)
         self.source_a.refresh_from_db()
@@ -849,3 +962,13 @@ class SubscriberCountTest(BaseTest):
 
         self.source_a.refresh_from_db()
         self.assertEqual(self.source_a.num_subs, 0)
+
+    def test_rollback_does_not_recount_or_keep_subscription(self):
+        with self.assertRaisesRegex(RuntimeError, "rollback"):
+            with transaction.atomic():
+                Subscription.objects.create(user=self.user, source=self.source_a)
+                raise RuntimeError("rollback")
+
+        self.source_a.refresh_from_db()
+        self.assertEqual(self.source_a.num_subs, 1)
+        self.assertFalse(Subscription.objects.filter(source=self.source_a).exists())

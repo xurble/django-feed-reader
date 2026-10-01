@@ -145,6 +145,7 @@ def fetch_feed_pagination(
     content_type,
     output: TextIO,
     normalized_feed=None,
+    before_request=None,
 ):
     """Fetch and validate initial-import pagination before persistence starts."""
     pages = []
@@ -183,6 +184,8 @@ def fetch_feed_pagination(
         pagination_result = _pagination_limit("entries", max_total_entries)
 
     while pagination_result is None:
+        if before_request:
+            before_request()
         next_url = _next_feed_page(feed, current_url)
         if next_url is None:
             break
@@ -250,7 +253,9 @@ def _posts_by_guid_lookup(source_feed: Source) -> dict:
         Post.objects.using(source_feed._state.db)
         .filter(source=source_feed)
         .prefetch_related(
-            Prefetch("enclosures", queryset=Enclosure.objects.using(source_feed._state.db))
+            Prefetch(
+                "enclosures", queryset=Enclosure.objects.using(source_feed._state.db)
+            )
         )
     ):
         if p.guid is not None:

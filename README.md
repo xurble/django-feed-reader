@@ -157,6 +157,19 @@ Polls all due `Source` rows, ordered by `due_poll`, up to `max_feeds`.
 
 Use this from cron, Celery, or another scheduled task runner.
 
+On PostgreSQL and MySQL, multiple workers may call `update_feeds()` concurrently.
+Each source is claimed with an expiring lease before network activity, so workers can
+process different sources without fetching the same source at the same time. The lease
+defaults to 600 seconds and can be configured with `FEEDS_POLL_LEASE_SECONDS`. It is
+renewed before each bounded feed, redirect, and pagination request. A crashed worker's
+source becomes eligible again after the lease expires; exactly-once HTTP requests are
+not guaranteed across process crashes or lease expiry.
+
+SQLite remains supported for normal use and single-worker polling, but concurrent
+polling is not supported on SQLite because it does not provide row-level locks.
+Applications that call `read_feed()` directly from concurrent workers remain
+responsible for serializing those calls.
+
 ### `test_feed(source, cache=False)`
 
 Performs a simple reachability test for a specific feed URL without going through the full persistence flow.
@@ -178,6 +191,9 @@ The library automatically adjusts polling frequency based on whether a feed chan
 Feeds that change frequently are polled more often. Feeds that remain unchanged are polled less often.
 
 The typical pattern is to run the poller every 5 to 10 minutes and let the library decide which sources are actually due.
+
+When rolling back the migration that adds poll-claim fields, stop all poll workers
+first so no worker is using lease state while the columns are removed.
 
 ### Using the management command
 
@@ -273,6 +289,10 @@ If `FEEDS_SERVER` is not set, the library will derive a default from `ALLOWED_HO
 - `FEEDS_MAX_PAGINATION_ENTRIES` (default: `2000`)
   - Maximum total entries imported during the initial XML/Atom history backfill.
   - Both pagination limits must be positive integers; invalid values use their defaults.
+
+- `FEEDS_POLL_LEASE_SECONDS` (default: `600`)
+  - Duration of scheduled-poll ownership before an abandoned claim can be recovered.
+  - Invalid or non-positive values use the default.
 
 - `FEEDS_DRIPFEED_KEY` (default: unset)
   - If present, Cloudflare-blocked feeds can be retried via [Dripfeed](https://dripfeed.app).

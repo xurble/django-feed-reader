@@ -68,17 +68,21 @@ Evidence: `feeds/admin.py`; public definitions and docstrings in `feeds/utils.py
 - **DATA-002** — A `Post` shall belong to exactly one source. A non-null GUID shall
   be unique within that source, enforced using the GUID's SHA-256 digest. The same
   GUID may occur in different sources and multiple null GUIDs are permitted.
-- **DATA-003** — A newly saved post whose index is null shall receive the next
-  source-local index and shall advance `Source.max_index`.
+- **DATA-003** — A newly saved post whose index is null shall atomically receive the
+  next positive source-local index and advance `Source.max_index`. Concurrent
+  automatic allocations for one source shall not duplicate indexes; allocation and
+  insertion shall roll back together.
 - **DATA-004** — An `Enclosure` shall belong to exactly one post. Its stored media
   classification shall recognize image, audio, or video from `medium` when present,
   otherwise from the MIME type prefix.
 - **DATA-005** — A non-folder `Subscription` shall be unique for a `(user, source)`
   pair. Multiple folder subscriptions, represented by a null source, are permitted.
-- **DATA-006** — Saving or deleting a non-folder subscription shall recalculate the
-  source's stored subscriber count. A source with no subscription history initially
-  reports one subscriber; after all explicit subscriptions are deleted it reports
-  zero.
+- **DATA-006** — Committing an ordinary save, delete, source assignment, clearing, or
+  move of a subscription shall recalculate every affected source's stored subscriber
+  count from committed rows without overwriting other source state. A source with no
+  subscription history initially reports one subscriber; after subscription
+  maintenance observes no explicit subscriptions it reports zero. Bulk operations,
+  raw SQL, and external writes do not trigger this maintenance.
 - **DATA-007** — Deleting a source shall cascade to its posts and subscriptions;
   deleting a post shall cascade to its enclosures; deleting a user or parent
   subscription shall cascade to its subscriptions.
@@ -101,6 +105,19 @@ Evidence: model fields, constraints, save behavior, and signals in
   clamp is applied.
 - **POLL-004** — New sources shall default to a timezone-aware past due time so
   they sort to the front of the polling queue.
+- **POLL-005** — On PostgreSQL and MySQL, `update_feeds` shall atomically claim each
+  source before network activity using a unique, renewable, expiring lease. A valid
+  claim prevents another worker from processing that source while allowing other due
+  sources to proceed. Ownership shall be checked under the source lock before results
+  are persisted, and stale owners shall neither persist nor release a newer claim.
+- **POLL-006** — `max_feeds` shall count successfully claimed sources. Normal and
+  handled-failure completion shall clear ownership; abandoned claims shall become
+  eligible after expiry. `FEEDS_POLL_LEASE_SECONDS` configures the lease and defaults
+  to 600 seconds. Exactly-once requests across crashes or lease expiry are not
+  guaranteed.
+- **POLL-007** — SQLite supports single-worker polling but does not guarantee
+  concurrent polling. Concurrent direct `read_feed` calls are outside the package's
+  coordination boundary on every backend.
 
 ### 4.2 Requests and validators
 
@@ -225,7 +242,9 @@ Evidence: enclosure synchronization in `feeds/utils_internal.py`;
 - **READ-001** — `Source.unread_count` shall equal `max_index - last_read`.
 - **READ-002** — `Source.get_unread_posts` shall return posts with indexes greater
   than `last_read`, ordered by creation time in the requested direction.
-- **READ-003** — `Source.mark_read` shall set `last_read` to `max_index`.
+- **READ-003** — `Source.mark_read` shall monotonically advance only `last_read`,
+  using the persisted `max_index` at the update point and never overwriting unrelated
+  source fields.
 - **READ-004** — Source pagination shall return the requested page plus its
   paginator, falling back to page one for invalid or empty page requests.
 
@@ -238,8 +257,9 @@ Evidence: enclosure synchronization in `feeds/utils_internal.py`;
 - **SUB-003** — Folder unread-post retrieval shall recursively combine descendant
   unread posts and sort them by creation time. Each returned post shall identify
   the originating subscription dynamically.
-- **SUB-004** — Marking a source subscription read shall advance its `last_read`.
-  Marking a folder read shall advance all descendant source subscriptions.
+- **SUB-004** — Marking a source subscription read shall monotonically advance only
+  its `last_read` using the source's persisted `max_index`. Marking a folder read shall
+  apply the same rule to every descendant source subscription.
 - **SUB-005** — Folder post pagination shall include posts from all descendant
   sources, order them newest first, and annotate each post with its subscription.
 - **SUB-006** — Root subscription listing shall order river subscriptions first,
@@ -288,6 +308,9 @@ Evidence: `feeds/utils.py`; `feeds/tests/test_http.py`;
   Invalid or non-positive values shall use those defaults.
 - **CFG-008** — `FEEDS_ALLOW_PRIVATE_NETWORKS` shall default to `False`. Setting
   it to `True` explicitly opts trusted installations into private-network feeds.
+- **CFG-009** — `FEEDS_POLL_LEASE_SECONDS` shall default to 600 seconds. Operators
+  must stop concurrent pollers before rolling back the migration that removes lease
+  fields.
 
 Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
 `feeds/utils_internal.py`; `feeds/management/commands/refreshfeeds.py`;
@@ -311,7 +334,7 @@ Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
   described by PARSE-010.
 
 Evidence: `AGENTS.md`; `setup.py`; `feeds/models.py`;
-`feeds/utils_internal.py`; migrations `0017` through `0019`; `changelog.md`.
+`feeds/utils_internal.py`; migrations `0017` through `0020`; `changelog.md`.
 
 ## 10. Suspected defects, contradictions, and coverage gaps
 

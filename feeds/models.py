@@ -8,9 +8,10 @@ import django.utils as django_utils
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.paginator import EmptyPage, InvalidPage, Paginator
-from django.db import models, router
-from django.db.models import Q
-from django.db.models.signals import post_delete, post_save, pre_save
+from django.db import models, router, transaction
+from django.db.models import F, OuterRef, Q, Subquery
+from django.db.models.functions import Greatest
+from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils.deconstruct import deconstructible
 
@@ -58,6 +59,12 @@ class Source(models.Model):
         default=default_due_poll
     )  # default to distant past to put new sources to front of queue
     """**datetime** When the Feed is next due to be fetched"""
+
+    poll_claim_token = models.UUIDField(blank=True, null=True, editable=False)
+    """Unique owner of an in-progress scheduled poll."""
+
+    poll_claim_expires = models.DateTimeField(blank=True, null=True, editable=False)
+    """When an abandoned scheduled-poll claim may be recovered."""
 
     etag = models.CharField(max_length=255, blank=True, null=True)
     last_modified = models.CharField(
@@ -243,8 +250,16 @@ class Source(models.Model):
 
     def mark_read(self):
         """In a single user system, mark this feed as read"""
-        self.last_read = self.max_index
-        self.save()
+        database = self._state.db or router.db_for_write(type(self), instance=self)
+        type(self).objects.using(database).filter(pk=self.pk).update(
+            last_read=Greatest(F("last_read"), F("max_index"))
+        )
+        self.last_read = (
+            type(self)
+            .objects.using(database)
+            .values_list("last_read", flat=True)
+            .get(pk=self.pk)
+        )
 
     def update_subscriber_count(self):
         """Called by the django save / delete hooks to update num_subs
@@ -252,8 +267,14 @@ class Source(models.Model):
         Internal method, there should be no need to call this
         """
 
-        self.num_subs = Subscription.objects.filter(source=self).count()
-        self.save()
+        database = self._state.db or router.db_for_write(type(self), instance=self)
+        _update_subscriber_counts(database, [self.pk])
+        self.num_subs = (
+            type(self)
+            .objects.using(database)
+            .values_list("num_subs", flat=True)
+            .get(pk=self.pk)
+        )
 
     """Will this appear in the docs?"""
 
@@ -373,11 +394,24 @@ class Post(models.Model):
         uf = kwargs.get("update_fields")
         if uf is not None:
             kwargs["update_fields"] = list(dict.fromkeys(list(uf) + ["guid_digest"]))
-        if self.index is None:
-            self.index = self.source.max_index + 1
-            self.source.max_index = self.index
-            self.source.save(update_fields=["max_index"])
-        super().save(*args, **kwargs)
+        if self.index is not None:
+            return super().save(*args, **kwargs)
+
+        database = kwargs.get("using") or router.db_for_write(type(self), instance=self)
+        kwargs["using"] = database
+        with transaction.atomic(using=database):
+            source = (
+                Source.objects.using(database)
+                .select_for_update()
+                .get(pk=self.source_id)
+            )
+            self.index = source.max_index + 1
+            source.max_index = self.index
+            source.save(using=database, update_fields=["max_index"])
+            cached_source = self._state.fields_cache.get("source")
+            if cached_source is not None and cached_source._state.db == database:
+                cached_source.max_index = self.index
+            return super().save(*args, **kwargs)
 
 
 class Enclosure(models.Model):
@@ -473,8 +507,8 @@ class Subscription(models.Model):
     """**str** The display name of the subscription - typically should be set to the name of the source where present"""
 
     def _validate_parent_relationship(self, using=None):
-        database = using or self._state.db or router.db_for_write(
-            type(self), instance=self
+        database = (
+            using or self._state.db or router.db_for_write(type(self), instance=self)
         )
         if self.parent_id is not None:
             seen = {self.pk} if self.pk is not None else set()
@@ -488,17 +522,15 @@ class Subscription(models.Model):
                 seen.add(ancestor_id)
 
                 ancestor = (
-                    type(self).objects.using(database)
+                    type(self)
+                    .objects.using(database)
                     .filter(pk=ancestor_id)
                     .values("parent_id", "source_id", "user_id")
                     .first()
                 )
                 if ancestor is None:
                     break
-                if (
-                    self.user_id is not None
-                    and ancestor["user_id"] != self.user_id
-                ):
+                if self.user_id is not None and ancestor["user_id"] != self.user_id:
                     raise ValidationError(
                         {
                             "parent": (
@@ -521,12 +553,13 @@ class Subscription(models.Model):
                 {"source": "A subscription with children must remain a folder."}
             )
         has_other_user_children = (
-            self.user_id is not None
-            and children.exclude(user_id=self.user_id).exists()
+            self.user_id is not None and children.exclude(user_id=self.user_id).exists()
         )
         if has_other_user_children:
             raise ValidationError(
-                {"user": "A subscription parent must have the same user as its children."}
+                {
+                    "user": "A subscription parent must have the same user as its children."
+                }
             )
 
     def clean(self):
@@ -550,15 +583,37 @@ class Subscription(models.Model):
             "user",
             "user_id",
         }
-        if update_fields is None or relationship_fields.intersection(update_fields):
-            database = using or router.db_for_write(type(self), instance=self)
-            self._validate_parent_relationship(using=database)
-        super().save(
-            force_insert=force_insert,
-            force_update=force_update,
-            using=using,
-            update_fields=update_fields,
-        )
+        database = using or router.db_for_write(type(self), instance=self)
+        with transaction.atomic(using=database):
+            previous_source_id = None
+            if self.pk is not None:
+                previous_source_id = (
+                    type(self)
+                    .objects.using(database)
+                    .select_for_update()
+                    .filter(pk=self.pk)
+                    .values_list("source_id", flat=True)
+                    .first()
+                )
+            if update_fields is None or relationship_fields.intersection(update_fields):
+                self._validate_parent_relationship(using=database)
+            result = super().save(
+                force_insert=force_insert,
+                force_update=force_update,
+                using=database,
+                update_fields=update_fields,
+            )
+            source_is_written = update_fields is None or {
+                "source",
+                "source_id",
+            }.intersection(update_fields)
+            persisted_source_id = (
+                self.source_id if source_is_written else previous_source_id
+            )
+            affected_source_ids = {previous_source_id, persisted_source_id} - {None}
+            if affected_source_ids:
+                _schedule_subscriber_count_update(database, affected_source_ids)
+            return result
 
     def _descendants(self, children_by_parent=None):
         """Yield each descendant once, even if stored parent data has a cycle."""
@@ -671,18 +726,31 @@ class Subscription(models.Model):
         If the subscription is acting as a folder then it will mark all
         children as read as well.
         """
-        if self.source:
-            self.last_read = self.source.max_index
-            self.save(update_fields=["last_read"])
+        database = self._state.db or router.db_for_write(type(self), instance=self)
+        source_max_index = (
+            Source.objects.using(database)
+            .filter(pk=OuterRef("source_id"))
+            .values("max_index")[:1]
+        )
+        if self.source_id:
+            type(self).objects.using(database).filter(pk=self.pk).update(
+                last_read=Greatest(F("last_read"), Subquery(source_max_index))
+            )
+            self.last_read = (
+                type(self)
+                .objects.using(database)
+                .values_list("last_read", flat=True)
+                .get(pk=self.pk)
+            )
             return
-        by_parent = _subscription_children_by_parent(self.user_id)
-        to_update = []
-        for sub in self._descendants(by_parent):
-            if sub.source_id and sub.last_read != sub.source.max_index:
-                sub.last_read = sub.source.max_index
-                to_update.append(sub)
-        if to_update:
-            Subscription.objects.bulk_update(to_update, ["last_read"])
+        by_parent = _subscription_children_by_parent(self.user_id, using=database)
+        descendant_ids = [
+            sub.pk for sub in self._descendants(by_parent) if sub.source_id
+        ]
+        if descendant_ids:
+            type(self).objects.using(database).filter(pk__in=descendant_ids).update(
+                last_read=Greatest(F("last_read"), Subquery(source_max_index))
+            )
 
     class Meta:
         # Unconditional unique: see Post.Meta.constraints — MySQL-compatible.
@@ -697,38 +765,45 @@ class Subscription(models.Model):
         ]
 
 
-def _subscription_children_by_parent(user_id):
+def _subscription_children_by_parent(user_id, using=None):
     """All subscriptions for user grouped by parent_id (single query)."""
     by_parent = defaultdict(list)
-    for sub in Subscription.objects.filter(user_id=user_id).select_related("source"):
+    query = (
+        Subscription.objects.using(using)
+        .filter(user_id=user_id)
+        .select_related("source")
+    )
+    for sub in query:
         by_parent[sub.parent_id].append(sub)
     return by_parent
 
 
-@receiver(pre_save)
-def pre_save_subscriber(sender, instance, **kwargs):
-    if sender == Subscription and instance.pk is not None:
-        try:
-            instance._previous_source = Subscription.objects.get(pk=instance.pk).source
-        except Subscription.DoesNotExist:
-            instance._previous_source = None
-    elif sender == Subscription:
-        instance._previous_source = None
+def _update_subscriber_counts(database, source_ids):
+    source_ids = sorted(set(source_ids))
+    if not source_ids:
+        return
+    with transaction.atomic(using=database):
+        sources = list(
+            Source.objects.using(database)
+            .select_for_update()
+            .filter(pk__in=source_ids)
+            .order_by("pk")
+        )
+        subscriptions = Subscription.objects.using(database)
+        for source in sources:
+            count = subscriptions.filter(source_id=source.pk).count()
+            Source.objects.using(database).filter(pk=source.pk).update(num_subs=count)
+
+
+def _schedule_subscriber_count_update(database, source_ids):
+    source_ids = tuple(sorted(set(source_ids)))
+    transaction.on_commit(
+        lambda: _update_subscriber_counts(database, source_ids), using=database
+    )
 
 
 @receiver(post_delete)
 def delete_subscriber(sender, instance, **kwargs):
-    if sender == Subscription and instance.source is not None:
-        instance.source.update_subscriber_count()
-
-
-@receiver(post_save)
-def save_subscriber(sender, instance, **kwargs):
-    if sender != Subscription:
-        return
-    previous_source = getattr(instance, '_previous_source', None)
-    current_source = instance.source
-    if current_source is not None:
-        current_source.update_subscriber_count()
-    if previous_source is not None and previous_source != current_source:
-        previous_source.update_subscriber_count()
+    if sender == Subscription and instance.source_id is not None:
+        database = kwargs.get("using") or router.db_for_write(sender, instance=instance)
+        _schedule_subscriber_count_update(database, [instance.source_id])
