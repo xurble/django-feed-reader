@@ -26,7 +26,7 @@ with open("README.md", encoding="utf-8") as f:
 
 setuptools.setup(
     name="django-feed-reader",
-    version="2.0.1b5",
+    version="3.0.0b1",
     description="An RSS feed reading library for Django.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -40,6 +40,10 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Framework :: Django",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Framework :: Django :: 4.2",
         "Framework :: Django :: 5.0",
         "Framework :: Django :: 5.1",
@@ -51,8 +55,9 @@ setuptools.setup(
         "feedparser>=6.0.0",
         "beautifulsoup4",
         "pyrfc3339",
-        "Django>=4.2",
+        "Django>=4.2,<5.2",
     ],
+    python_requires=">=3.10,<3.13",
     extras_require={
         "test": TEST_REQUIREMENTS,
         "quality": QUALITY_REQUIREMENTS,

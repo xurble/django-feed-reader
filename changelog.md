@@ -1,4 +1,9 @@
 
+### 3.0.0 (unreleased)
+- Breaking: The supported runtime matrix is now Python 3.10 through 3.12 and
+  Django 4.2 through 5.1. Python 3.9 and earlier and Django 3.2 are no longer
+  supported. Package metadata now enforces both bounds.
+
 ### 2.0.1
 - Concurrency: Coordinate scheduled pollers with renewable leases on PostgreSQL and
   MySQL; make automatic post indexes, read markers, and subscription counts safe

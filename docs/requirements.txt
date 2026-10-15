@@ -3,5 +3,5 @@ feedparser
 BeautifulSoup4
 requests
 pyrfc3339
-django>=4.2
+django>=4.2,<5.2
 sphinx-rtd-theme

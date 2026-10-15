@@ -56,9 +56,43 @@ class QualityToolingTests(TestCase):
             'exclude_dirs = ["feeds/migrations", "feeds/tests"]', configuration
         )
 
-    def test_package_requires_the_documented_django_floor(self):
+    def test_package_metadata_matches_the_supported_runtime_matrix(self):
         setup = (self.root / "setup.py").read_text(encoding="utf-8")
 
-        self.assertIn('"Django>=4.2"', setup)
+        self.assertIn('python_requires=">=3.10,<3.13"', setup)
+        self.assertIn('"Django>=4.2,<5.2"', setup)
+        for version in ("3.10", "3.11", "3.12"):
+            self.assertIn(f'"Programming Language :: Python :: {version}"', setup)
         self.assertIn('"Framework :: Django :: 4.2"', setup)
+        self.assertIn('"Framework :: Django :: 5.0"', setup)
+        self.assertIn('"Framework :: Django :: 5.1"', setup)
         self.assertNotIn("Django :: 3.2", setup)
+
+    def test_ci_covers_supported_matrix_boundaries_without_cross_products(self):
+        workflow = (self.root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        pairs = set(
+            re.findall(
+                r'- python-version: "([^"]+)"\n\s+django-version: "([^"]+)"',
+                workflow,
+            )
+        )
+
+        self.assertEqual(
+            pairs,
+            {
+                ("3.10", "4.2"),
+                ("3.10", "5.1"),
+                ("3.11", "5.0"),
+                ("3.12", "4.2"),
+                ("3.12", "5.1"),
+            },
+        )
+
+    def test_user_documentation_matches_the_supported_runtime_matrix(self):
+        readme = (self.root / "README.md").read_text(encoding="utf-8")
+        overview = (self.root / "docs/modules/overview.rst").read_text(encoding="utf-8")
+
+        for documentation in (readme, overview):
+            self.assertIn("Python 3.10 through 3.12", documentation)
+            self.assertIn("Django 4.2 through 5.1", documentation)
+            self.assertIn("hard package bounds", documentation)

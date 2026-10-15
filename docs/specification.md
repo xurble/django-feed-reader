@@ -321,9 +321,13 @@ Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
 - **COMPAT-001** — The public utility signatures, model fields and related names,
   `refreshfeeds` command, and established setting names are compatibility-sensitive
   because the package is distributed for downstream Django applications.
-- **COMPAT-002** — The implementation shall support Django 4.2 and later versions
-  represented by package metadata; the current classifier list includes Django
-  3.2, 4.2, 5.0, and 5.1.
+- **COMPAT-002** — The supported runtime matrix is Python 3.10 through 3.12 and
+  Django 4.2 through 5.1. Package bounds and classifiers shall represent that
+  matrix, and CI shall exercise its boundary combinations plus a representative
+  middle combination.
+- **COMPAT-003** — Newly released Python and Django versions are unsupported until
+  CI, package metadata, and user documentation adopt them together. Removing a
+  supported version requires a major release and an explicit release-note entry.
 - **NFR-001** — Polling shall bound direct HTTP waits with a 20-second request
   timeout and first-import history backfill with configurable page and entry
   limits.
