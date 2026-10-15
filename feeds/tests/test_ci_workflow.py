@@ -55,3 +55,10 @@ class QualityToolingTests(TestCase):
         self.assertIn(
             'exclude_dirs = ["feeds/migrations", "feeds/tests"]', configuration
         )
+
+    def test_package_requires_the_documented_django_floor(self):
+        setup = (self.root / "setup.py").read_text(encoding="utf-8")
+
+        self.assertIn('"Django>=4.2"', setup)
+        self.assertIn('"Framework :: Django :: 4.2"', setup)
+        self.assertNotIn("Django :: 3.2", setup)

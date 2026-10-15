@@ -18,7 +18,7 @@ It is designed as a backend library, not a complete reader application. It gives
 ## Requirements
 
 - Python 3
-- Django 3.2+
+- Django 4.2+
 
 ## Installation
 
