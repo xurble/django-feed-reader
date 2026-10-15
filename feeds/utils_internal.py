@@ -271,7 +271,8 @@ def _posts_by_guid_lookup(source_feed: Source, guids) -> dict:
         for start in range(0, len(missing_guids), GUID_LOOKUP_BATCH_SIZE):
             batch = missing_guids[start : start + GUID_LOOKUP_BATCH_SIZE]
             fallback_ids.extend(
-                pk for pk, source_id, guid in Post.objects.using(database)
+                pk
+                for pk, source_id, guid in Post.objects.using(database)
                 .filter(guid__in=batch)
                 .order_by()
                 .values_list("pk", "source_id", "guid")
@@ -285,7 +286,8 @@ def _posts_by_guid_lookup(source_feed: Source, guids) -> dict:
             )
     posts_by_guid = {}
     matched = [
-        post for post in candidates
+        post
+        for post in candidates
         if post.source_id == source_feed.pk and post.guid in guids
     ]
     for start in range(0, len(matched), GUID_LOOKUP_BATCH_SIZE):
@@ -465,7 +467,6 @@ def _batch_sync_enclosures_json(p: Post, e):
 
 
 def _customize_sanitizer(fp):
-
     bad_attributes = ["align", "valign", "hspace", "width", "height"]
 
     for item in bad_attributes:
@@ -477,7 +478,6 @@ def _customize_sanitizer(fp):
 
 
 def get_agent(source_feed: Source):
-
     agent = "{user_agent} (+{server}; Updater; {subs} subscribers)".format(
         user_agent=settings.FEEDS_USER_AGENT,
         server=settings.FEEDS_SERVER,
@@ -519,7 +519,8 @@ def make_guid(e_id, e_url, body):
 
 
 def hash_body(body):
-    m = hashlib.md5()
+    # MD5 is used only as a stable content identifier, never for security.
+    m = hashlib.md5()  # nosec B324
     m.update(body.encode("utf-8"))
     return m.hexdigest()
 
@@ -623,7 +624,6 @@ def parse_feed_xml(
     max_entries=None,
     parsed_feed=None,
 ):
-
     ok = True
     changed = False
 
@@ -816,7 +816,6 @@ def parse_feed_xml(
 
 
 def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None):
-
     ok = True
     changed = False
 
@@ -915,7 +914,6 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
             source_feed, {guid for _, _, guid in prepared_entries}
         )
         for e, body, guid in prepared_entries:
-
             p = posts_by_guid.get(guid)
             is_new = p is None
             if p is not None:

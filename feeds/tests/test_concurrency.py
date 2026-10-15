@@ -166,10 +166,14 @@ class TransactionalConcurrencyTests(TransactionTestCase):
         self.assertTrue(all(token is not None for _, token in processed))
         self.assertEqual(len({token for _, token in processed}), 2)
         self.assertFalse(
-            Source.objects.filter(pk__in=sources, poll_claim_token__isnull=False).exists()
+            Source.objects.filter(
+                pk__in=sources, poll_claim_token__isnull=False
+            ).exists()
         )
         self.assertFalse(
-            Source.objects.filter(pk__in=sources, poll_claim_expires__isnull=False).exists()
+            Source.objects.filter(
+                pk__in=sources, poll_claim_expires__isnull=False
+            ).exists()
         )
 
     def test_concurrent_automatic_post_indexes_are_unique_and_ordered(self):

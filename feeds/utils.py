@@ -690,7 +690,8 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
             if expanded:
                 if sub.source_id is None:
                     sub._unread_count = sum(
-                        child.unread_count for child in children.get(sub.pk, [])
+                        child.unread_count
+                        for child in children.get(sub.pk, [])
                         if child.pk in seen
                     )
                 continue
@@ -700,7 +701,8 @@ def get_unread_subscription_list_for_user(user) -> List[Subscription]:
             stack.append((sub, True))
             if sub.source_id is None:
                 stack.extend(
-                    (child, False) for child in children.get(sub.pk, [])
+                    (child, False)
+                    for child in children.get(sub.pk, [])
                     if child.pk not in seen
                 )
 

@@ -14,7 +14,6 @@ class Command(BaseCommand):
     help = "Refreshes the RSS feeds, 30 at a time"
 
     def handle(self, *args, **options):
-
         update_feeds(30)
 
         self.stdout.write(self.style.SUCCESS("\nFinished"))

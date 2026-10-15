@@ -369,7 +369,6 @@ class Post(models.Model):
 
     @property
     def recast_link(self):
-
         # TODO: This needs to come out, it's just for recast
         return "/post/%d/" % self.id
 
@@ -441,7 +440,6 @@ class Enclosure(models.Model):
 
     @property
     def recast_link(self):
-
         # TODO: This needs to come out, it's just for recast
         return "/enclosure/%d/" % self.id
 
@@ -655,7 +653,6 @@ class Subscription(models.Model):
         return self._unread_count
 
     def _gather_posts(self, post_list, children_by_parent=None):
-
         if children_by_parent is None:
             children_by_parent = _subscription_children_by_parent(self.user_id)
 
@@ -671,7 +668,9 @@ class Subscription(models.Model):
             unread_filter = Q()
             for sub in subscriptions[start : start + 400]:
                 unread_filter |= Q(source_id=sub.source_id, index__gt=sub.last_read)
-            for post in Post.objects.filter(unread_filter).order_by("source_id", "index"):
+            for post in Post.objects.filter(unread_filter).order_by(
+                "source_id", "index"
+            ):
                 by_source[post.source_id].append(post)
 
         # Preserve the previous stable tie order: tree order, then post index.

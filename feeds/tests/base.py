@@ -36,7 +36,6 @@ class BaseTest(TransactionTestCase):
         url=BASE_URL,
         is_cloudflare=False,
     ):
-
         content = open(os.path.join(TEST_FILES_FOLDER, test_file), "rb").read()
 
         ret_headers = {"Content-Type": content_type, "etag": "an-etag"}

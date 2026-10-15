@@ -321,7 +321,7 @@ Evidence: `feeds/__init__.py`; module-level settings in `feeds/utils.py` and
 - **COMPAT-001** — The public utility signatures, model fields and related names,
   `refreshfeeds` command, and established setting names are compatibility-sensitive
   because the package is distributed for downstream Django applications.
-- **COMPAT-002** — The implementation shall support Django 3.2 and later versions
+- **COMPAT-002** — The implementation shall support Django 4.2 and later versions
   represented by package metadata; the current classifier list includes Django
   3.2, 4.2, 5.0, and 5.1.
 - **NFR-001** — Polling shall bound direct HTTP waits with a 20-second request
@@ -410,8 +410,10 @@ The 16 September 2026 revalidation inspected:
 - all test modules and feed fixtures;
 - recent repository history and the implementation of each finding in section 10.
 
-The canonical rigorous check is `.venv/bin/pytest --reuse-db`. On 16 September
-2026 it collected 148 tests: 145 passed and three MySQL-only migration recovery
+The canonical rigorous check is `./_check.sh`; it includes the local SQLite test
+suite with coverage as well as formatting, lint, security, strict documentation,
+and package-artifact checks. On 16 September 2026 the then-current pytest-only
+check collected 148 tests: 145 passed and three MySQL-only migration recovery
 tests were skipped under the local SQLite configuration. This dated count is a
 reproducible evidence snapshot rather than a permanent test-count requirement;
 ongoing CI results remain the source for later revisions. The specification does

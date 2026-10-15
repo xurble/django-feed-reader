@@ -78,7 +78,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.status_code, 200)
 
     def test_etags(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -116,7 +115,6 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
 
     def test_304_clears_etag_when_last_change_stale(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -152,7 +150,6 @@ class HTTPStuffTest(BaseTest):
         self.assertIn(src.etag, (None, ""))
 
     def test_fetch_network_error_records_failure(self, mock):
-
         mock.register_uri(
             "GET", BASE_URL, exc=requests.exceptions.ConnectTimeout("timed out")
         )
@@ -168,7 +165,6 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.last_result.startswith("Fetch error:"))
 
     def test_http_400_disables_feed(self, mock):
-
         self._populate_mock(
             mock, status=400, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -185,7 +181,6 @@ class HTTPStuffTest(BaseTest):
         self.assertIn("400", src.last_result)
 
     def test_http_401_disables_feed(self, mock):
-
         self._populate_mock(
             mock, status=401, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -200,7 +195,6 @@ class HTTPStuffTest(BaseTest):
         self.assertFalse(src.live)
 
     def test_http_429_keeps_feed_live(self, mock):
-
         self._populate_mock(
             mock, status=429, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -219,7 +213,6 @@ class HTTPStuffTest(BaseTest):
         self.assertGreater(src.due_poll, timezone.now())
 
     def test_http_429_honors_retry_after_seconds(self, mock):
-
         self._populate_mock(
             mock,
             status=429,
@@ -243,7 +236,6 @@ class HTTPStuffTest(BaseTest):
         )
 
     def test_http_429_honors_retry_after_http_date(self, mock):
-
         retry_at = timezone.now() + timedelta(minutes=90)
 
         self._populate_mock(
@@ -265,7 +257,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.interval, 90)
 
     def test_http_429_bounds_excessive_retry_after(self, mock):
-
         self._populate_mock(
             mock,
             status=429,
@@ -286,7 +277,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.interval, 60 * 24)
 
     def test_http_429_ignores_invalid_retry_after(self, mock):
-
         self._populate_mock(
             mock,
             status=429,
@@ -306,7 +296,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.interval, 120)
 
     def test_not_a_feed(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -326,7 +315,6 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
 
     def test_permission_denied(self, mock):
-
         self._populate_mock(
             mock, status=403, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -344,7 +332,6 @@ class HTTPStuffTest(BaseTest):
         self.assertFalse(src.live)
 
     def test_cloudflared_standard(self, mock):
-
         settings.FEEDS_DRIPFEED_KEY = "Key"
 
         # to pick up the settings change
@@ -382,7 +369,6 @@ class HTTPStuffTest(BaseTest):
         )
 
     def test_cloudflared_already_dripfed(self, mock):
-
         settings.FEEDS_DRIPFEED_KEY = "Key"
 
         # to pick up the settings change
@@ -426,7 +412,6 @@ class HTTPStuffTest(BaseTest):
         )
 
     def test_cloudflared_cant_dripfeed(self, mock):
-
         settings.FEEDS_DRIPFEED_KEY = "Key"
 
         # to pick up the settings change
@@ -465,7 +450,6 @@ class HTTPStuffTest(BaseTest):
         )
 
     def test_feed_gone(self, mock):
-
         self._populate_mock(
             mock, status=410, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -481,7 +465,6 @@ class HTTPStuffTest(BaseTest):
         self.assertFalse(src.live)
 
     def test_feed_not_found(self, mock):
-
         self._populate_mock(
             mock, status=404, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -498,7 +481,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.interval, 120)
 
     def test_temp_redirect_rejects_unsafe_location(self, mock):
-
         unsafe = "http://127.0.0.1/internal"
         self._populate_mock(
             mock,
@@ -609,7 +591,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.last_result, "Feed hostname resolution failed")
 
     def test_perm_redirect_rejects_unsafe_location(self, mock):
-
         unsafe = "http://127.0.0.1/internal"
         self._populate_mock(
             mock,
@@ -651,7 +632,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.feed_url, BASE_URL)
 
     def test_empty_response_body(self, mock):
-
         ret_headers = {"Content-Type": "application/rss+xml", "etag": "e"}
         mock.register_uri(
             "GET", BASE_URL, status_code=200, content=b"", headers=ret_headers
@@ -668,7 +648,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.posts.count(), 0)
 
     def test_invalid_utf8_json_body(self, mock):
-
         ret_headers = {"Content-Type": "application/json", "etag": "e"}
         mock.register_uri(
             "GET", BASE_URL, status_code=200, content=b"{\xff", headers=ret_headers
@@ -698,7 +677,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.posts.count(), 0)
 
     def test_temp_redirect_relative_location(self, mock):
-
         resolved = "http://feed.com/second.xml"
         self._populate_mock(
             mock,
@@ -813,7 +791,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.last_result, "Redirect hop limit exceeded")
 
     def test_temp_redirect(self, mock):
-
         new_url = "http://new.feed.com/"
         self._populate_mock(
             mock,
@@ -875,7 +852,6 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
 
     def test_perm_redirect(self, mock):
-
         new_url = "http://new.feed.com/"
         self._populate_mock(
             mock,
@@ -911,7 +887,6 @@ class HTTPStuffTest(BaseTest):
         self.assertTrue(src.live)
 
     def test_server_error_1(self, mock):
-
         self._populate_mock(
             mock, status=500, test_file="empty_file.txt", content_type="text/plain"
         )
@@ -928,7 +903,6 @@ class HTTPStuffTest(BaseTest):
         self.assertEqual(src.interval, 120)
 
     def test_server_error_2(self, mock):
-
         self._populate_mock(
             mock, status=503, test_file="empty_file.txt", content_type="text/plain"
         )

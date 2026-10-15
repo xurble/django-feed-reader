@@ -6,3 +6,24 @@ build-backend = "setuptools.build_meta"
 DJANGO_SETTINGS_MODULE = "tests.settings"
 pythonpath = ["."]
 testpaths = ["feeds/tests"]
+
+[tool.ruff]
+exclude = ["feeds/migrations"]
+
+[tool.ruff.lint]
+select = ["I", "F401"]
+
+[tool.bandit]
+exclude_dirs = ["feeds/migrations", "feeds/tests"]
+# Feed formats contain many optional attributes. The defensive fallbacks around
+# those attributes deliberately ignore lookup/type failures and are covered by tests.
+skips = ["B110"]
+
+[tool.coverage.run]
+source = ["feeds"]
+omit = ["feeds/migrations/*", "feeds/tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_empty = true

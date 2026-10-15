@@ -68,20 +68,38 @@ class XMLFeedsTest(BaseTest):
     def test_refresh_loads_only_incoming_posts_and_enclosures(self, mock):
         src = Source.objects.create(feed_url=BASE_URL)
         old = Post.objects.create(
-            source=src, index=1, guid="tag:example.org,2024:known",
-            title="Old", body="", created=timezone.now(),
+            source=src,
+            index=1,
+            guid="tag:example.org,2024:known",
+            title="Old",
+            body="",
+            created=timezone.now(),
         )
         unrelated = Post.objects.create(
-            source=src, index=2, guid="unrelated-history",
-            title="Unrelated", body="", created=timezone.now(),
+            source=src,
+            index=2,
+            guid="unrelated-history",
+            title="Unrelated",
+            body="",
+            created=timezone.now(),
         )
         for post in (old, unrelated):
-            Enclosure.objects.create(post=post, href=f"http://feed.com/{post.pk}", type="audio/mpeg")
-        Post.objects.bulk_create([
-            Post(source=src, index=i + 3, guid=f"historical-{i}",
-                 title="Historical", body="", created=timezone.now())
-            for i in range(40)
-        ])
+            Enclosure.objects.create(
+                post=post, href=f"http://feed.com/{post.pk}", type="audio/mpeg"
+            )
+        Post.objects.bulk_create(
+            [
+                Post(
+                    source=src,
+                    index=i + 3,
+                    guid=f"historical-{i}",
+                    title="Historical",
+                    body="",
+                    created=timezone.now(),
+                )
+                for i in range(40)
+            ]
+        )
 
         with CaptureQueriesContext(connection) as queries:
             ok, changed = utils_internal.parse_feed_xml(
@@ -89,25 +107,35 @@ class XMLFeedsTest(BaseTest):
             )
 
         self.assertEqual((ok, changed), (True, True))
-        post_reads = [q["sql"] for q in queries if
-                      'FROM "feeds_post"' in q["sql"] and q["sql"].lstrip().startswith("SELECT")]
-        self.assertEqual(len(post_reads), 3)  # initial probe, indexed match, new GUID fallback
+        post_reads = [
+            q["sql"]
+            for q in queries
+            if 'FROM "feeds_post"' in q["sql"]
+            and q["sql"].lstrip().startswith("SELECT")
+        ]
+        self.assertEqual(
+            len(post_reads), 3
+        )  # initial probe, indexed match, new GUID fallback
         self.assertIn('"guid_digest" IN', post_reads[-2])
         self.assertIn('"guid" IN', post_reads[-1])
-        enclosure_reads = [q["sql"] for q in queries if
-                           'FROM "feeds_enclosure"' in q["sql"] and '"post_id" IN' in q["sql"]
-                           and q["sql"].lstrip().startswith("SELECT")]
+        enclosure_reads = [
+            q["sql"]
+            for q in queries
+            if 'FROM "feeds_enclosure"' in q["sql"]
+            and '"post_id" IN' in q["sql"]
+            and q["sql"].lstrip().startswith("SELECT")
+        ]
         self.assertEqual(len(enclosure_reads), 1)
         self.assertIn(f'"post_id" IN ({old.pk})', enclosure_reads[0])
         self.assertEqual(src.posts.count(), 43)
 
     def test_declared_latin1_xml_reaches_feedparser_unchanged(self, mock):
-        body = '''<?xml version="1.0" encoding="ISO-8859-1"?>
+        body = """<?xml version="1.0" encoding="ISO-8859-1"?>
         <rss version="2.0"><channel><title>Café feed</title>
         <link>http://feed.com/</link><description>News</description>
         <item><title>Crème brûlée</title><guid>latin1-entry</guid>
         <link>http://feed.com/entry</link><description>Déjà vu</description>
-        </item></channel></rss>'''.encode("iso-8859-1")
+        </item></channel></rss>""".encode("iso-8859-1")
         for index, content_type in enumerate(("application/rss+xml", "text/plain")):
             with self.subTest(content_type=content_type):
                 url = BASE_URL + str(index)
@@ -160,9 +188,7 @@ class XMLFeedsTest(BaseTest):
             parse_transaction_states.append(connection.in_atomic_block)
             return original_parse(*args, **kwargs)
 
-        with patch.object(
-            utils_internal.parser, "parse", side_effect=tracked_parse
-        ):
+        with patch.object(utils_internal.parser, "parse", side_effect=tracked_parse):
             read_feed(src, output=NullOutput())
         src.refresh_from_db()
 
@@ -403,7 +429,6 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(src.posts.first().enclosures.count(), 0)
 
     def test_simple_xml(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -429,7 +454,6 @@ class XMLFeedsTest(BaseTest):
         self.assertNotEqual(src.last_change, ls)
 
     def test_podcast(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -456,7 +480,6 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(enc.href, "http://traffic.libsyn.com/atpfm/atp238.mp3")
 
     def test_mastodon(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -475,7 +498,6 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(src.posts.all()[0].enclosures.count(), 1)
 
     def test_media_content(self, mock):
-
         self._populate_mock(
             mock,
             status=200,
@@ -503,7 +525,6 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(enc.description, "This is the alt text.")
 
     def test_keep_old_enclosure(self, mock):
-
         settings.FEEDS_KEEP_OLD_ENCLOSURES = True
 
         # to pick up the settings change
@@ -565,7 +586,6 @@ class XMLFeedsTest(BaseTest):
         )
 
     def test_save_json(self, mock):
-
         settings.FEEDS_SAVE_JSON = True
 
         # to pick up the settings change
@@ -635,7 +655,6 @@ class XMLFeedsTest(BaseTest):
         self.assertEqual(src.name, "safe")
 
     def test_sanitize_attrs(self, mock):
-
         self._populate_mock(
             mock,
             status=200,

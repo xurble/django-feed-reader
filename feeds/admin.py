@@ -13,7 +13,8 @@ class SourceAdmin(admin.ModelAdmin):
         if obj.id is None:
             return ""
         qs = obj.posts.all()
-        return mark_safe(
+        # The URL comes from Django and the remaining values are integers.
+        return mark_safe(  # nosec B308, B703
             '<a href="%s?source__id=%i" target="_blank">%i Posts</a>'
             % (reverse("admin:feeds_post_changelist"), obj.id, qs.count())
         )
@@ -34,7 +35,8 @@ class PostAdmin(admin.ModelAdmin):
         if obj.id is None:
             return ""
         qs = obj.enclosures.all()
-        return mark_safe(
+        # The URL comes from Django and the remaining values are integers.
+        return mark_safe(  # nosec B308, B703
             '<a href="%s?post__id=%i" target="_blank">%i Enclosures</a>'
             % (reverse("admin:feeds_enclosure_changelist"), obj.id, qs.count())
         )
