@@ -336,9 +336,14 @@ Cloudflare/Dripfeed endpoints as trusted infrastructure.
 From a checkout:
 
 ```bash
-pip install -e ".[test]"
-pytest
+pip install -e ".[quality]"
+./_check.sh
 ```
+
+`_check.sh` is the canonical, non-mutating local quality gate and matches the CI
+quality job. It checks Ruff formatting and imports, the reviewed Bandit policy,
+test coverage (minimum 90%), strict Sphinx documentation, and wheel/sdist
+metadata. Run `./_lint.sh` separately to apply Ruff import fixes and formatting.
 
 ## Notes for integrators
 

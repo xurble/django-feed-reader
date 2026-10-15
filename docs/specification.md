@@ -410,8 +410,10 @@ The 16 September 2026 revalidation inspected:
 - all test modules and feed fixtures;
 - recent repository history and the implementation of each finding in section 10.
 
-The canonical rigorous check is `.venv/bin/pytest --reuse-db`. On 16 September
-2026 it collected 148 tests: 145 passed and three MySQL-only migration recovery
+The canonical rigorous check is `./_check.sh`; it includes the local SQLite test
+suite with coverage as well as formatting, lint, security, strict documentation,
+and package-artifact checks. On 16 September 2026 the then-current pytest-only
+check collected 148 tests: 145 passed and three MySQL-only migration recovery
 tests were skipped under the local SQLite configuration. This dated count is a
 reproducible evidence snapshot rather than a permanent test-count requirement;
 ongoing CI results remain the source for later revisions. The specification does

@@ -9,6 +9,24 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install quality dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[quality]"
+
+      - name: Run quality gate
+        run: ./_check.sh
+
   test:
     runs-on: ubuntu-latest
     strategy:
