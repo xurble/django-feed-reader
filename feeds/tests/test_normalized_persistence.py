@@ -10,6 +10,32 @@ from .base import BASE_URL, BaseTest, NullOutput
 
 
 class NormalizedPersistenceTests(BaseTest):
+    def test_xml_enclosure_normalization_keeps_raw_json_unchanged(self):
+        entry = utils_internal.parser.FeedParserDict(
+            {
+                "guid": "raw-xml",
+                "summary": "body",
+                "content": [{"type": "text/html", "value": "original alt"}],
+                "media_content": [{"url": "https://example.com/media.jpg"}],
+            }
+        )
+        feed = utils_internal.parser.FeedParserDict(
+            {
+                "feed": utils_internal.parser.FeedParserDict({"title": "Feed"}),
+                "entries": [entry],
+            }
+        )
+        source = Source.objects.create(feed_url=BASE_URL)
+
+        with patch.object(utils_internal, "SAVE_JSON", True):
+            normalized = utils_internal._normalize_xml_feed(feed, source)
+            self.assertNotIn("description", entry["media_content"][0])
+            utils_internal._persist_normalized_feed(source, normalized, NullOutput())
+
+        post = Post.objects.get(source=source)
+        self.assertNotIn("description", post.json["media_content"][0])
+        self.assertEqual(post.enclosures.get().description, "original alt")
+
     def test_format_adapters_produce_shared_entries_without_mutating_input(self):
         xml = utils_internal.parser.parse(
             b"<rss><channel><title>XML feed</title><link>https://example.com/</link>"

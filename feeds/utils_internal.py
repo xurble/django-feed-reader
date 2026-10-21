@@ -349,6 +349,9 @@ def _xml_entry_enclosure_dicts(e) -> list:
 
     if "media_content" in e:
         for mc in e["media_content"]:
+            # SAVE_JSON stores the original parsed entry before enclosure
+            # synchronization. Do not change that raw representation here.
+            mc = dict(mc)
             if len(e["media_content"]) == 1 and len(e.get("content", [])) == 1:
                 mc["description"] = e["content"][0].get("value")
 
