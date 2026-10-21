@@ -532,36 +532,53 @@ def read_feed(source_feed: Source, output: TextIO = stdout):
     if renew_claim:
         renew_claim()
 
-    with transaction.atomic(using=database):
-        source_feed._state.db = database
-        persisted_source = (
-            Source.objects.using(database).select_for_update().get(pk=source_feed.pk)
-        )
-        claim_token = getattr(source_feed, "_poll_claim_token", None)
-        if claim_token is not None and (
-            persisted_source.poll_claim_token != claim_token
-            or persisted_source.poll_claim_expires is None
-            or persisted_source.poll_claim_expires <= timezone.now()
-        ):
-            raise PollClaimLost(f"Poll claim lost for source {source_feed.pk}")
-        source_feed.max_index = persisted_source.max_index
-        if source_feed.feed_url != original_feed_url:
-            source_feed.save(using=database, update_fields=["feed_url"])
-        if ret and ret.status_code >= 200 and ret.status_code < 300:
-            _read_feed_process_success_body(
-                source_feed,
-                ret,
-                output,
-                was302,
-                normalized_feed,
-                pagination_pages,
-                pagination_result,
+    try:
+        with transaction.atomic(using=database):
+            source_feed._state.db = database
+            persisted_source = (
+                Source.objects.using(database)
+                .select_for_update()
+                .get(pk=source_feed.pk)
             )
+            claim_token = getattr(source_feed, "_poll_claim_token", None)
+            if claim_token is not None and (
+                persisted_source.poll_claim_token != claim_token
+                or persisted_source.poll_claim_expires is None
+                or persisted_source.poll_claim_expires <= timezone.now()
+            ):
+                raise PollClaimLost(f"Poll claim lost for source {source_feed.pk}")
+            source_feed.max_index = persisted_source.max_index
+            if source_feed.feed_url != original_feed_url:
+                source_feed.save(using=database, update_fields=["feed_url"])
+            if ret and ret.status_code >= 200 and ret.status_code < 300:
+                _read_feed_process_success_body(
+                    source_feed,
+                    ret,
+                    output,
+                    was302,
+                    normalized_feed,
+                    pagination_pages,
+                    pagination_result,
+                )
 
-        if claim_token is not None:
-            source_feed.poll_claim_token = None
-            source_feed.poll_claim_expires = None
-        _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
+            if claim_token is not None:
+                source_feed.poll_claim_token = None
+                source_feed.poll_claim_expires = None
+            _read_feed_finalize_interval_and_save(source_feed, old_interval, output)
+
+    except PollClaimLost:
+        raise
+    except Exception as exc:
+        # Keep the database rollback intact. The caller receives a bounded
+        # diagnostic on its Source instance, without feed content or exception text.
+        diagnostic = (f"Unexpected feed refresh error ({type(exc).__name__})")[:255]
+        logger.error(
+            "Unexpected feed refresh error for source %s (%s)",
+            source_feed.pk,
+            type(exc).__name__,
+        )
+        source_feed.last_result = diagnostic
+        raise
 
 
 def test_feed(
