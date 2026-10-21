@@ -427,6 +427,7 @@ class JSONFeedTest(BaseTest):
         src.refresh_from_db()
 
         self.assertEqual(src.last_result, "This feed has expired")
+        self.assertIsNotNone(src.last_success)
         self.assertEqual(src.interval, 60 * 24)  # capped to max by read_feed
 
     def test_json_feed_saves_name_and_icon(self, mock):

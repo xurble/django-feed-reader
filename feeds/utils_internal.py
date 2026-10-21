@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import time
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Optional, TextIO
 
@@ -42,6 +43,34 @@ if hasattr(settings, "FEEDS_USER_AGENT"):
 
 
 logger = logging.getLogger(__file__)
+
+
+@dataclass(frozen=True)
+class NormalizedEntry:
+    """Values shared by the XML and JSON persistence paths."""
+
+    guid: str
+    body: str
+    raw: object
+    title: object
+    link: object
+    image_url: object
+    author: object
+    enclosures: Optional[list]
+    format: str
+    created: object = None
+    created_error: bool = False
+
+
+@dataclass(frozen=True)
+class NormalizedFeed:
+    format: str
+    entries: list[NormalizedEntry]
+    metadata: dict
+    raw: object
+
+
+_MISSING = object()
 
 
 def _positive_int_setting(name: str, default: int) -> int:
@@ -320,6 +349,9 @@ def _xml_entry_enclosure_dicts(e) -> list:
 
     if "media_content" in e:
         for mc in e["media_content"]:
+            # SAVE_JSON stores the original parsed entry before enclosure
+            # synchronization. Do not change that raw representation here.
+            mc = dict(mc)
             if len(e["media_content"]) == 1 and len(e.get("content", [])) == 1:
                 mc["description"] = e["content"][0].get("value")
 
@@ -617,6 +649,276 @@ def parse_feed(
     return (ok, changed)
 
 
+def _xml_created(entry):
+    for field in ("published_parsed", "updated_parsed"):
+        value = getattr(entry, field, None)
+        if value is None:
+            continue
+        try:
+            return datetime.datetime.fromtimestamp(time.mktime(value)).replace(
+                tzinfo=datetime.timezone.utc
+            ), False
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return None, True
+
+
+def _normalize_xml_feed(feed, source_feed, max_entries=None):
+    entries = feed["entries"]
+    if max_entries is not None:
+        entries = entries[:max_entries]
+    metadata = {}
+    for key, attribute in (
+        ("name", "title"),
+        ("site_url", "link"),
+        ("description", "summary"),
+        ("description", "description"),
+    ):
+        value = getattr(feed.feed, attribute, _MISSING)
+        if value is not _MISSING:
+            metadata[key] = value
+    image = getattr(feed.feed, "image", None)
+    if image is not None:
+        value = getattr(image, "href", _MISSING)
+        if value is not _MISSING:
+            metadata["image_url"] = value
+    site_url = metadata.get("site_url", source_feed.site_url)
+    normalized_entries = []
+    for position, entry in enumerate(reversed(entries)):
+        body = ""
+        for attribute, prefer_equal in (
+            ("summary", False),
+            ("summary_detail", True),
+            ("description", True),
+        ):
+            value = getattr(entry, attribute, None)
+            if attribute == "summary_detail" and value is not None:
+                value = getattr(value, "value", None)
+            if isinstance(value, str) and (
+                len(value) > len(body) or (prefer_equal and len(value) == len(body))
+            ):
+                body = value.strip()
+        for content in getattr(entry, "content", []):
+            value = content.get("value", "")
+            if content.get("type", "") == "text/html" and len(value) > len(body):
+                body = value
+        body = fix_relative(body, site_url)
+        guid = make_guid(
+            getattr(entry, "guid", None), getattr(entry, "link", None), body
+        )
+        created, created_error = _xml_created(entry)
+        image = getattr(entry, "image", None)
+        try:
+            enclosures = _normalized_enclosure_items_xml(
+                _xml_entry_enclosure_dicts(entry)
+            )
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            # The old per-entry enclosure boundary kept the post and any
+            # existing enclosures when attachment data was malformed.
+            logger.warning(
+                "Skipped malformed enclosure for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+            enclosures = None
+        normalized_entries.append(
+            NormalizedEntry(
+                guid=guid,
+                body=body,
+                raw=entry,
+                title=getattr(entry, "title", _MISSING),
+                link=getattr(entry, "link", _MISSING),
+                image_url=getattr(image, "href", _MISSING),
+                author=getattr(entry, "author", ""),
+                enclosures=enclosures,
+                format="xml",
+                created=created,
+                created_error=created_error,
+            )
+        )
+    return NormalizedFeed("xml", normalized_entries, metadata, feed)
+
+
+def _normalize_json_feed(feed, source_feed):
+    entries = feed["items"]
+    metadata = {}
+    if "home_page_url" in feed and "title" in feed:
+        metadata["site_url"] = feed["home_page_url"]
+        metadata["name"] = feed["title"]
+    else:
+        # The legacy JSON path sanitized the existing name even when either
+        # metadata field was absent.
+        metadata["name"] = source_feed.name
+    if "description" in feed:
+        _customize_sanitizer(parser)
+        try:
+            metadata["description"] = parser.sanitizer._sanitize_html(
+                feed["description"], "utf-8", "text/html"
+            )
+        except (AttributeError, TypeError, ValueError):
+            pass
+    if "name" in metadata:
+        _customize_sanitizer(parser)
+        try:
+            metadata["name"] = parser.sanitizer._sanitize_html(
+                metadata["name"], "utf-8", "text/html"
+            )
+        except (AttributeError, TypeError, ValueError):
+            if "site_url" not in metadata:
+                metadata.pop("name")
+    if "icon" in feed:
+        metadata["image_url"] = feed["icon"]
+    site_url = metadata.get("site_url", source_feed.site_url)
+    normalized_entries = []
+    for position, entry in enumerate(reversed(entries)):
+        body = fix_relative(
+            entry.get("content_html", entry.get("content_text", " ")), site_url
+        )
+        guid = make_guid(entry.get("id"), entry.get("url"), body)
+        _customize_sanitizer(parser)
+        body = parser.sanitizer._sanitize_html(body, "utf-8", "text/html")
+        title = parser.sanitizer._sanitize_html(
+            entry.get("title", ""), "utf-8", "text/html"
+        )
+        try:
+            created = pyrfc3339.parse(entry["date_published"])
+            created_error = False
+        except (KeyError, TypeError, ValueError):
+            created, created_error = None, True
+        try:
+            enclosures = _normalized_enclosure_items_json(entry)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Skipped malformed enclosure for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+            enclosures = None
+        normalized_entries.append(
+            NormalizedEntry(
+                guid=guid,
+                body=body,
+                raw=entry,
+                title=title,
+                link=entry.get("url", ""),
+                image_url=entry.get("image", entry.get("banner_image", _MISSING)),
+                author=entry.get("author", ""),
+                enclosures=enclosures,
+                format="json",
+                created=created,
+                created_error=created_error,
+            )
+        )
+    return NormalizedFeed("json", normalized_entries, metadata, feed)
+
+
+def _persist_normalized_feed(source_feed, normalized: NormalizedFeed, output: TextIO):
+    """Persist either format through one post and enclosure synchronization path."""
+    database = source_feed._state.db
+    metadata = normalized.metadata
+    if normalized.format == "json" and {"name", "site_url"} <= metadata.keys():
+        source_feed.site_url = metadata["site_url"]
+        source_feed.name = metadata["name"]
+        source_feed.save(using=database, update_fields=["site_url", "name"])
+    else:
+        for key in ("name", "site_url"):
+            if key in metadata:
+                setattr(source_feed, key, metadata[key])
+                source_feed.save(using=database, update_fields=[key])
+    for key in ("image_url", "description"):
+        if key in metadata:
+            setattr(source_feed, key, metadata[key])
+            source_feed.save(using=database, update_fields=[key])
+    posts_by_guid = _posts_by_guid_lookup(
+        source_feed, {entry.guid for entry in normalized.entries}
+    )
+    changed = False
+    for position, entry in enumerate(normalized.entries):
+        post = posts_by_guid.get(entry.guid)
+        is_new = post is None
+        output.write(("\nNEW " if is_new else "\nEXISTING ") + entry.guid)
+        if is_new:
+            post = Post(index=0, body=" ", title="", guid=entry.guid)
+            post.found = timezone.now()
+            post.source = source_feed
+            changed = True
+        if entry.format == "xml":
+            if is_new:
+                if entry.created_error:
+                    output.write("\nCREATED ERROR")
+                post.created = entry.created or timezone.now()
+        else:
+            if entry.created_error:
+                output.write("\nCREATED ERROR")
+            post.created = entry.created or timezone.now()
+        if entry.title is not _MISSING:
+            post.title = entry.title
+        if entry.link is not _MISSING:
+            post.link = entry.link
+        if entry.image_url is not _MISSING:
+            post.image_url = entry.image_url
+        post.author = entry.author
+        post.body = entry.body
+        if SAVE_JSON:
+            post.json = entry.raw
+        try:
+            post.save(using=database)
+        except Exception as exc:
+            logger.error(
+                "Post persistence failed for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+            raise
+        if is_new:
+            post._prefetched_objects_cache = {"enclosures": []}
+        posts_by_guid[entry.guid] = post
+        try:
+            if entry.enclosures is not None:
+                _batch_sync_enclosures_normalized(
+                    post,
+                    entry.enclosures,
+                    type_default_update=(
+                        "unknown" if entry.format == "xml" else "audio/mpeg"
+                    ),
+                    update_fields=(
+                        ["length", "type", "medium", "description", "is_current"]
+                        if entry.format == "xml"
+                        else ["length", "type", "is_current"]
+                    ),
+                    with_medium_description=entry.format == "xml",
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Skipped malformed enclosure for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+        except Exception as exc:
+            logger.error(
+                "Enclosure persistence failed for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+            raise
+        finally:
+            if is_new:
+                post._prefetched_objects_cache.pop("enclosures", None)
+    if SAVE_JSON:
+        if normalized.format == "xml":
+            normalized.raw["entries"] = None
+        else:
+            normalized.raw["items"] = []
+        source_feed.json = normalized.raw
+        source_feed.save(using=database, update_fields=["json"])
+    return changed
+
+
 def parse_feed_xml(
     source_feed,
     feed_content,
@@ -624,373 +926,63 @@ def parse_feed_xml(
     max_entries=None,
     parsed_feed=None,
 ):
-    ok = True
-    changed = False
-
     is_first = not source_feed.posts.using(source_feed._state.db).exists()
     if is_first and max_entries is None:
         max_entries = _positive_int_setting(
             "FEEDS_MAX_PAGINATION_ENTRIES", DEFAULT_MAX_PAGINATION_ENTRIES
         )
-
-    # output.write(ret.content)
     try:
         if parsed_feed is _NORMALIZATION_FAILED:
             raise ValueError("Feed normalization failed")
         if parsed_feed is None:
             _customize_sanitizer(parser)
-            f = parser.parse(feed_content)
-        else:
-            f = parsed_feed
-        entries = f["entries"]
-        if max_entries is not None:
-            entries = entries[:max_entries]
-        if len(entries):
-            source_feed.last_success = (
-                timezone.now()
-            )  # in case we start auto unsubscribing long dead feeds
-        else:
-            source_feed.last_result = "Feed is empty"
-            ok = False
-
+            parsed_feed = parser.parse(feed_content)
+        normalized = _normalize_xml_feed(parsed_feed, source_feed, max_entries)
     except (LookupError, AttributeError, TypeError, ValueError, UnicodeDecodeError):
         source_feed.last_result = "Feed Parse Error"
-        entries = []
-        ok = False
-
-    source_feed.save(
-        using=source_feed._state.db, update_fields=["last_success", "last_result"]
-    )
-
-    if ok:
-        try:
-            source_feed.name = f.feed.title
-            source_feed.save(using=source_feed._state.db, update_fields=["name"])
-        except Exception as ex:
-            logger.warning("Update name error:" + str(ex))
-            pass
-
-        try:
-            source_feed.site_url = f.feed.link
-            source_feed.save(using=source_feed._state.db, update_fields=["site_url"])
-        except Exception:
-            pass
-
-        try:
-            source_feed.image_url = f.feed.image.href
-            source_feed.save(using=source_feed._state.db, update_fields=["image_url"])
-        except Exception:
-            pass
-
-        # either of these is fine, prefer description over summary
-        # also feedparser will give us itunes:summary etc if there
-        try:
-            source_feed.description = f.feed.summary
-        except Exception:
-            pass
-
-        try:
-            source_feed.description = f.feed.description
-        except Exception:
-            pass
-
-        try:
-            source_feed.save(using=source_feed._state.db, update_fields=["description"])
-        except Exception:
-            pass
-
-        # output.write(entries)
-        entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
-        prepared_entries = []
-        for e in entries:
-            # we are going to take the longest
-            body = ""
-
-            if hasattr(e, "summary"):
-                if len(e.summary) > len(body):
-                    body = e.summary
-                    body = body.strip()
-
-            if hasattr(e, "summary_detail"):
-                if len(e.summary_detail.value) >= len(body):
-                    body = e.summary_detail.value
-                    body = body.strip()
-
-            if hasattr(e, "description"):
-                if len(e.description) >= len(body):
-                    body = e.description
-                    body = body.strip()
-
-            # This can be a content:encoded html body
-            # but it can also be the alt-text of an an Enclosure
-            if hasattr(e, "content"):
-                for c in e.content:
-                    if c.get("type", "") == "text/html" and len(
-                        c.get("value", "")
-                    ) > len(body):
-                        body = c.value
-
-            body = fix_relative(body, source_feed.site_url)
-            e_guid = getattr(e, "guid", None)
-            e_link = getattr(e, "link", None)
-            guid = make_guid(e_guid, e_link, body)
-            prepared_entries.append((e, body, guid))
-        posts_by_guid = _posts_by_guid_lookup(
-            source_feed, {guid for _, _, guid in prepared_entries}
-        )
-        for e, body, guid in prepared_entries:
-            p = posts_by_guid.get(guid)
-            is_new = p is None
-            if p is not None:
-                output.write("\nEXISTING " + guid)
-            else:
-                output.write("\nNEW " + guid)
-                p = Post(index=0, body=" ", title="", guid=guid)
-                p.found = timezone.now()
-                changed = True
-
-                try:
-                    p.created = datetime.datetime.fromtimestamp(
-                        time.mktime(e.published_parsed)
-                    ).replace(tzinfo=datetime.timezone.utc)
-                except Exception:
-                    try:
-                        p.created = datetime.datetime.fromtimestamp(
-                            time.mktime(e.updated_parsed)
-                        ).replace(tzinfo=datetime.timezone.utc)
-                    except Exception as ex3:
-                        output.write("\nCREATED ERROR:" + str(ex3))
-                        p.created = timezone.now()
-
-                p.source = source_feed
-
-            if SAVE_JSON:
-                p.json = e
-
-            try:
-                p.title = e.title
-            except Exception as ex:
-                output.write("\nTitle error:" + str(ex))
-
-            try:
-                p.link = e.link
-            except Exception as ex:
-                output.write("\nLink error:" + str(ex))
-
-            try:
-                p.image_url = e.image.href
-            except Exception:
-                pass
-
-            try:
-                p.author = e.author
-            except Exception:
-                p.author = ""
-
-            try:
-                p.body = body
-                # output.write(p.body)
-            except Exception as ex:
-                output.write(str(ex))
-                output.write(p.body)
-
-            p.save(using=source_feed._state.db)
-            if is_new:
-                p._prefetched_objects_cache = {"enclosures": []}
-            posts_by_guid[guid] = p
-
-            try:
-                _batch_sync_enclosures_xml(p, e)
-            except Exception as ex:
-                output.write("\nNo enclosures - " + str(ex))
-            if is_new:
-                p._prefetched_objects_cache.pop("enclosures", None)
-
-        if SAVE_JSON:
-            # Kill the entries
-            f["entries"] = None
-            source_feed.json = f
-            source_feed.save(using=source_feed._state.db, update_fields=["json"])
-
-    return (ok, changed)
-
-
-def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None):
-    ok = True
-    changed = False
-
-    try:
-        if parsed_feed is _NORMALIZATION_FAILED:
-            raise ValueError("Feed normalization failed")
-        f = parsed_feed if parsed_feed is not None else json.loads(feed_content)
-        entries = f["items"]
-        if len(entries):
-            source_feed.last_success = (
-                timezone.now()
-            )  # in case we start auto unsubscribing long dead feeds
-        else:
-            source_feed.last_result = "Feed is empty"
-            source_feed.interval += 120
-            ok = False
-
         source_feed.save(
             using=source_feed._state.db, update_fields=["last_success", "last_result"]
         )
+        return False, False
+    if not normalized.entries:
+        source_feed.last_result = "Feed is empty"
+        source_feed.save(
+            using=source_feed._state.db, update_fields=["last_success", "last_result"]
+        )
+        return False, False
+    source_feed.last_success = timezone.now()
+    source_feed.save(
+        using=source_feed._state.db, update_fields=["last_success", "last_result"]
+    )
+    return True, _persist_normalized_feed(source_feed, normalized, output)
 
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        source_feed.last_result = "Feed Parse Error"
-        entries = []
-        source_feed.interval += 120
-        ok = False
 
-    if ok:
-        if "expired" in f and f["expired"]:
-            # This feed says it is done
-            # TODO: permanently disable
-            # for now source_feed.interval to max
+def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None):
+    try:
+        if parsed_feed is _NORMALIZATION_FAILED:
+            raise ValueError("Feed normalization failed")
+        parsed_feed = (
+            parsed_feed if parsed_feed is not None else json.loads(feed_content)
+        )
+        if not parsed_feed["items"]:
+            source_feed.last_result = "Feed is empty"
+            source_feed.interval += 120
+            source_feed.save(
+                using=source_feed._state.db,
+                update_fields=["last_success", "last_result"],
+            )
+            return False, False
+        source_feed.last_success = timezone.now()
+        source_feed.save(
+            using=source_feed._state.db, update_fields=["last_success", "last_result"]
+        )
+        if parsed_feed.get("expired"):
             source_feed.interval = 24 * 3 * 60
             source_feed.last_result = "This feed has expired"
-            return (False, False)
-
-        try:
-            source_feed.site_url = f["home_page_url"]
-            source_feed.name = f["title"]
-
-            source_feed.save(
-                using=source_feed._state.db, update_fields=["site_url", "name"]
-            )
-
-        except Exception:
-            pass
-
-        try:
-            if "description" in f:
-                _customize_sanitizer(parser)
-                source_feed.description = parser.sanitizer._sanitize_html(
-                    f["description"], "utf-8", "text/html"
-                )
-                source_feed.save(
-                    using=source_feed._state.db, update_fields=["description"]
-                )
-        except Exception:
-            pass
-
-        try:
-            _customize_sanitizer(parser)
-            source_feed.name = parser.sanitizer._sanitize_html(
-                source_feed.name, "utf-8", "text/html"
-            )
-            source_feed.save(using=source_feed._state.db, update_fields=["name"])
-
-        except Exception:
-            pass
-
-        try:
-            if "icon" in f:
-                source_feed.image_url = f["icon"]
-                source_feed.save(
-                    using=source_feed._state.db, update_fields=["image_url"]
-                )
-        except Exception:
-            pass
-
-        # output.write(entries)
-        entries.reverse()  # Entries are typically in reverse chronological order - put them in right order
-        prepared_entries = []
-        for e in entries:
-            body = " "
-            if "content_text" in e:
-                body = e["content_text"]
-            if "content_html" in e:
-                body = e["content_html"]  # prefer html over text
-
-            body = fix_relative(body, source_feed.site_url)
-
-            e_id = e.get("id", None)
-            e_url = e.get("url", None)
-            guid = make_guid(e_id, e_url, body)
-            prepared_entries.append((e, body, guid))
-        posts_by_guid = _posts_by_guid_lookup(
-            source_feed, {guid for _, _, guid in prepared_entries}
-        )
-        for e, body, guid in prepared_entries:
-            p = posts_by_guid.get(guid)
-            is_new = p is None
-            if p is not None:
-                output.write("\nEXISTING " + guid)
-            else:
-                output.write("\nNEW " + guid)
-                p = Post(index=0, body=" ")
-                p.found = timezone.now()
-                changed = True
-                p.source = source_feed
-
-            try:
-                title = e["title"]
-            except Exception:
-                title = ""
-
-            # borrow the RSS parser's sanitizer
-            _customize_sanitizer(parser)
-            body = parser.sanitizer._sanitize_html(
-                body, "utf-8", "text/html"
-            )  # TODO: validate charset ??
-            _customize_sanitizer(parser)
-            title = parser.sanitizer._sanitize_html(
-                title, "utf-8", "text/html"
-            )  # TODO: validate charset ??
-            # no other fields are ever marked as |safe in the templates
-
-            if "banner_image" in e:
-                p.image_url = e["banner_image"]
-
-            if "image" in e:
-                p.image_url = e["image"]
-
-            try:
-                p.link = e["url"]
-            except Exception:
-                p.link = ""
-
-            p.title = title
-
-            try:
-                p.created = pyrfc3339.parse(e["date_published"])
-            except Exception:
-                output.write("\nCREATED ERROR")
-                p.created = timezone.now()
-
-            p.guid = guid
-            try:
-                p.author = e["author"]
-            except Exception:
-                p.author = ""
-
-            if SAVE_JSON:
-                p.json = e
-
-            try:
-                p.body = body
-                # output.write(p.body)
-            except Exception as ex:
-                output.write(str(ex))
-                output.write(p.body)
-
-            p.save(using=source_feed._state.db)
-            if is_new:
-                p._prefetched_objects_cache = {"enclosures": []}
-            posts_by_guid[guid] = p
-
-            try:
-                _batch_sync_enclosures_json(p, e)
-            except Exception as ex:
-                output.write("\nNo enclosures - " + str(ex))
-            if is_new:
-                p._prefetched_objects_cache.pop("enclosures", None)
-
-        if SAVE_JSON:
-            f["items"] = []
-            source_feed.json = f
-            source_feed.save(using=source_feed._state.db, update_fields=["json"])
-
-    return (ok, changed)
+            return False, False
+        normalized = _normalize_json_feed(parsed_feed, source_feed)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        source_feed.last_result = "Feed Parse Error"
+        source_feed.interval += 120
+        return False, False
+    return True, _persist_normalized_feed(source_feed, normalized, output)
