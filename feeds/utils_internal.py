@@ -56,7 +56,7 @@ class NormalizedEntry:
     link: object
     image_url: object
     author: object
-    enclosures: list
+    enclosures: Optional[list]
     format: str
     created: object = None
     created_error: bool = False
@@ -684,7 +684,7 @@ def _normalize_xml_feed(feed, source_feed, max_entries=None):
             metadata["image_url"] = value
     site_url = metadata.get("site_url", source_feed.site_url)
     normalized_entries = []
-    for entry in reversed(entries):
+    for position, entry in enumerate(reversed(entries)):
         body = ""
         for attribute, prefer_equal in (
             ("summary", False),
@@ -708,6 +708,20 @@ def _normalize_xml_feed(feed, source_feed, max_entries=None):
         )
         created, created_error = _xml_created(entry)
         image = getattr(entry, "image", None)
+        try:
+            enclosures = _normalized_enclosure_items_xml(
+                _xml_entry_enclosure_dicts(entry)
+            )
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            # The old per-entry enclosure boundary kept the post and any
+            # existing enclosures when attachment data was malformed.
+            logger.warning(
+                "Skipped malformed enclosure for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+            enclosures = None
         normalized_entries.append(
             NormalizedEntry(
                 guid=guid,
@@ -717,9 +731,7 @@ def _normalize_xml_feed(feed, source_feed, max_entries=None):
                 link=getattr(entry, "link", _MISSING),
                 image_url=getattr(image, "href", _MISSING),
                 author=getattr(entry, "author", ""),
-                enclosures=_normalized_enclosure_items_xml(
-                    _xml_entry_enclosure_dicts(entry)
-                ),
+                enclosures=enclosures,
                 format="xml",
                 created=created,
                 created_error=created_error,
@@ -759,7 +771,7 @@ def _normalize_json_feed(feed, source_feed):
         metadata["image_url"] = feed["icon"]
     site_url = metadata.get("site_url", source_feed.site_url)
     normalized_entries = []
-    for entry in reversed(entries):
+    for position, entry in enumerate(reversed(entries)):
         body = fix_relative(
             entry.get("content_html", entry.get("content_text", " ")), site_url
         )
@@ -774,6 +786,16 @@ def _normalize_json_feed(feed, source_feed):
             created_error = False
         except (KeyError, TypeError, ValueError):
             created, created_error = None, True
+        try:
+            enclosures = _normalized_enclosure_items_json(entry)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Skipped malformed enclosure for source %s entry %s (%s)",
+                source_feed.pk,
+                position,
+                type(exc).__name__,
+            )
+            enclosures = None
         normalized_entries.append(
             NormalizedEntry(
                 guid=guid,
@@ -783,7 +805,7 @@ def _normalize_json_feed(feed, source_feed):
                 link=entry.get("url", ""),
                 image_url=entry.get("image", entry.get("banner_image", _MISSING)),
                 author=entry.get("author", ""),
-                enclosures=_normalized_enclosure_items_json(entry),
+                enclosures=enclosures,
                 format="json",
                 created=created,
                 created_error=created_error,
@@ -855,19 +877,20 @@ def _persist_normalized_feed(source_feed, normalized: NormalizedFeed, output: Te
             post._prefetched_objects_cache = {"enclosures": []}
         posts_by_guid[entry.guid] = post
         try:
-            _batch_sync_enclosures_normalized(
-                post,
-                entry.enclosures,
-                type_default_update=(
-                    "unknown" if entry.format == "xml" else "audio/mpeg"
-                ),
-                update_fields=(
-                    ["length", "type", "medium", "description", "is_current"]
-                    if entry.format == "xml"
-                    else ["length", "type", "is_current"]
-                ),
-                with_medium_description=entry.format == "xml",
-            )
+            if entry.enclosures is not None:
+                _batch_sync_enclosures_normalized(
+                    post,
+                    entry.enclosures,
+                    type_default_update=(
+                        "unknown" if entry.format == "xml" else "audio/mpeg"
+                    ),
+                    update_fields=(
+                        ["length", "type", "medium", "description", "is_current"]
+                        if entry.format == "xml"
+                        else ["length", "type", "is_current"]
+                    ),
+                    with_medium_description=entry.format == "xml",
+                )
         except (KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "Skipped malformed enclosure for source %s entry %s (%s)",

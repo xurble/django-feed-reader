@@ -10,6 +10,47 @@ from .base import BASE_URL, BaseTest, NullOutput
 
 
 class NormalizedPersistenceTests(BaseTest):
+    def test_malformed_attachments_do_not_discard_valid_entries(self):
+        for format_name in ("xml", "json"):
+            with self.subTest(format=format_name):
+                source = Source.objects.create(feed_url=BASE_URL + format_name)
+                if format_name == "xml":
+                    entry = utils_internal.parser.FeedParserDict(
+                        {
+                            "guid": format_name,
+                            "title": "Valid entry",
+                            "summary": "body",
+                            "media_content": None,
+                        }
+                    )
+                    feed = utils_internal.parser.FeedParserDict(
+                        {
+                            "feed": utils_internal.parser.FeedParserDict(
+                                {"title": "Feed"}
+                            ),
+                            "entries": [entry],
+                        }
+                    )
+                    result = utils_internal.parse_feed_xml(
+                        source, b"", NullOutput(), parsed_feed=feed
+                    )
+                else:
+                    feed = {
+                        "items": [
+                            {
+                                "id": format_name,
+                                "title": "Valid entry",
+                                "content_text": "body",
+                                "attachments": 3,
+                            }
+                        ]
+                    }
+                    result = utils_internal.parse_feed_json(
+                        source, "", NullOutput(), parsed_feed=feed
+                    )
+                self.assertEqual(result, (True, True))
+                self.assertEqual(source.posts.get().title, "Valid entry")
+
     def test_xml_enclosure_normalization_keeps_raw_json_unchanged(self):
         entry = utils_internal.parser.FeedParserDict(
             {
