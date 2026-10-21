@@ -1,5 +1,6 @@
 """Tests for the repository's GitHub Actions workflow."""
 
+import ast
 import re
 from pathlib import Path
 from unittest import TestCase
@@ -56,9 +57,56 @@ class QualityToolingTests(TestCase):
             'exclude_dirs = ["feeds/migrations", "feeds/tests"]', configuration
         )
 
-    def test_package_requires_the_documented_django_floor(self):
-        setup = (self.root / "setup.py").read_text(encoding="utf-8")
+    def test_package_metadata_matches_the_supported_runtime_matrix(self):
+        setup = ast.parse((self.root / "setup.py").read_text(encoding="utf-8"))
+        setup_calls = [
+            node
+            for node in ast.walk(setup)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "setuptools"
+            and node.func.attr == "setup"
+        ]
+        self.assertEqual(len(setup_calls), 1)
+        metadata = {keyword.arg: keyword.value for keyword in setup_calls[0].keywords}
 
-        self.assertIn('"Django>=4.2"', setup)
-        self.assertIn('"Framework :: Django :: 4.2"', setup)
-        self.assertNotIn("Django :: 3.2", setup)
+        self.assertEqual(ast.literal_eval(metadata["python_requires"]), ">=3.10,<3.13")
+        self.assertIn(
+            "Django>=4.2,<5.2", ast.literal_eval(metadata["install_requires"])
+        )
+        classifiers = ast.literal_eval(metadata["classifiers"])
+        for version in ("3.10", "3.11", "3.12"):
+            self.assertIn(f"Programming Language :: Python :: {version}", classifiers)
+        self.assertIn("Framework :: Django :: 4.2", classifiers)
+        self.assertIn("Framework :: Django :: 5.0", classifiers)
+        self.assertIn("Framework :: Django :: 5.1", classifiers)
+        self.assertNotIn("Framework :: Django :: 3.2", classifiers)
+
+    def test_ci_covers_supported_matrix_boundaries_without_cross_products(self):
+        workflow = (self.root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        rows = re.findall(
+            r'- python-version: "([^"]+)"\n\s+django-version: "([^"]+)"'
+            r'\n\s+django-spec: "([^"]+)"',
+            workflow,
+        )
+
+        self.assertCountEqual(
+            rows,
+            [
+                ("3.10", "4.2", "Django>=4.2,<4.3"),
+                ("3.10", "5.1", "Django>=5.1,<5.2"),
+                ("3.11", "5.0", "Django>=5.0,<5.1"),
+                ("3.12", "4.2", "Django>=4.2,<4.3"),
+                ("3.12", "5.1", "Django>=5.1,<5.2"),
+            ],
+        )
+
+    def test_user_documentation_matches_the_supported_runtime_matrix(self):
+        readme = (self.root / "README.md").read_text(encoding="utf-8")
+        overview = (self.root / "docs/modules/overview.rst").read_text(encoding="utf-8")
+
+        for documentation in (readme, overview):
+            self.assertIn("Python 3.10 through 3.12", documentation)
+            self.assertIn("Django 4.2 through 5.1", documentation)
+            self.assertIn("hard package bounds", documentation)

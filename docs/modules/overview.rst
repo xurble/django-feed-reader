@@ -18,8 +18,13 @@ Features
 Requirements
 ------------
 
-* Python 3
-* Django 4.2+
+* Python 3.10 through 3.12
+* Django 4.2 through 5.1
+
+These ranges are hard package bounds, not only a list of versions known to work.
+New Python or Django releases become supported only when the CI matrix, package
+metadata, and user documentation are updated together. Removing a supported
+version is a breaking change and is announced in the next major release notes.
 
 Installation
 ------------
