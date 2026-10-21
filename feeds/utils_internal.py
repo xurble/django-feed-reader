@@ -946,6 +946,10 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
                 update_fields=["last_success", "last_result"],
             )
             return False, False
+        source_feed.last_success = timezone.now()
+        source_feed.save(
+            using=source_feed._state.db, update_fields=["last_success", "last_result"]
+        )
         if parsed_feed.get("expired"):
             source_feed.interval = 24 * 3 * 60
             source_feed.last_result = "This feed has expired"
@@ -955,8 +959,4 @@ def parse_feed_json(source_feed, feed_content, output: TextIO, parsed_feed=None)
         source_feed.last_result = "Feed Parse Error"
         source_feed.interval += 120
         return False, False
-    source_feed.last_success = timezone.now()
-    source_feed.save(
-        using=source_feed._state.db, update_fields=["last_success", "last_result"]
-    )
     return True, _persist_normalized_feed(source_feed, normalized, output)
